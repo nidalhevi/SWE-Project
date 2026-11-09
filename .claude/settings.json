@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "make test 1>&2 || exit 2" } ] }
+    ]
+  },
+  "permissions": {
+    "deny": [ "Edit(./tests/perft_suite.epd)", "Write(./tests/perft_suite.epd)" ]
+  }
+}

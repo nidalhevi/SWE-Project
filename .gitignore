@@ -1,0 +1,8 @@
+build/
+*.o
+*.dSYM/
+.DS_Store
+__pycache__/
+crash-*
+timeout-*
+leak-*
