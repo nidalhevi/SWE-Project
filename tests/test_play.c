@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 /* test_play.c — the terminal loop and the batch protocol driven from memory
  * buffers (fmemopen), so the whole user-facing path runs under the sanitizers. */
 #include "fen.h"
