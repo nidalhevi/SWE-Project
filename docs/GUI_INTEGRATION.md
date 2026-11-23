@@ -47,7 +47,13 @@ produced by `vision/chessvision/export.py`):
 - `corrected`: a person chose the move at the terminal prompt (`--ask`). Always false when the GUI runs it.
 - `status` uses the same words as the referee's `status` command.
 
-Suggested GUI steps:
+**Built 2026-11-23** (after the merge into `main`): `chess_app/photo_game.py` reads the JSON into a `PhotoGame`
+(no Qt, tested in `chess_app/tests/`), `chess_app/photo_importer.py` runs the reader with `QProcess`, and
+`main_window.py` has "Open photo game…", ◀ ▶, a move list and "Save PGN…". It only displays: the referee is
+not loaded with the position yet (step 2 below is still open, and belongs with move input). The reader's
+Python is `CHESSVISION_PYTHON` if set, else the GUI's own.
+
+The steps as first suggested:
 1. "Open photo game…" → folder dialog → run the command with `QProcess` (program and arguments separately, as
    `RefereeClient.start` does). Show stderr lines as progress; about 0.2 s per photo on a Mac.
 2. On exit code 0, load `game.json`. Show `final_fen`: `referee.load_position(PositionSnapshot(final_fen))`,

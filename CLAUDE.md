@@ -12,7 +12,7 @@ The spec is SPEC.md; read it before any task. Build only what the current pass i
 - Play the engine: `./build/release/chess play` then `go`; UCI for a GUI: `./build/release/chess uci`
 - Perft timings: `tools/bench_perft.sh` (needs hyperfine); matches: `/usr/bin/python3 tools/match.py --help`
 - Photos → PGN (+ JSON for the GUI): `/usr/bin/python3 vision/scripts/run_game.py <folder> -o game.pgn --json game.json`
-- GUI (PySide6, flat imports, run from its folder): `cd chess_app && python main.py`; referee check: `python check_referee.py --bin ../build/release/chess`
+- GUI (PySide6, flat imports, run from its folder): `cd chess_app && python main.py`; referee check: `python check_referee.py --bin ../build/release/chess`; tests: `.venv/bin/python -m pytest chess_app/tests`; the photo reader runs under `CHESSVISION_PYTHON` (here `/usr/bin/python3`)
 - Fuzz the FEN parser: see docs/FUZZING.md (Apple clang has no libFuzzer; use Homebrew LLVM)
 
 ## Conventions
