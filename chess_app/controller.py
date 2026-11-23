@@ -4,8 +4,12 @@ The C referee owns legality. This module only chooses among returned moves.
 """
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import replace
+
 from PySide6.QtCore import QObject, QTimer, Signal
 from models import Move, PositionSnapshot, STARTING_FEN
+from game_tree import GameTree
 
 
 class ChessController(QObject):
@@ -17,6 +21,7 @@ class ChessController(QObject):
     promotion_requested = Signal(object)    # tuple of legal Move candidates
     problem = Signal(str)
     closed = Signal()
+    tree_changed = Signal()
 
     def __init__(self, referee, parent=None):
         super().__init__(parent)
@@ -27,7 +32,9 @@ class ChessController(QObject):
         self.selected_square = None
         self.legal_moves = ()
         self.last_move = None
-        self._history = []
+        self.tree = None
+        self._replay_target = None
+        self._replay_path = deque()
         self._promotion_moves = ()
         self._pending = None
         self._initial = PositionSnapshot(STARTING_FEN)
@@ -47,8 +54,17 @@ class ChessController(QObject):
         return self.phase == 'ready'
 
     @property
+    def can_previous(self):
+        return self.can_load and self.tree is not None and self.tree.current.parent_id is not None
+
+    @property
+    def can_next(self):
+        return self.can_load and self.tree is not None and self.tree.next_id() is not None
+
+    @property
     def can_undo(self):
-        return self.phase == 'ready' and bool(self._history)
+        # Compatibility with stage 4: Undo now navigates back, preserving moves.
+        return self.can_previous
 
     def start(self, program, arguments=None, initial=None):
         self._initial = initial or PositionSnapshot(STARTING_FEN)
@@ -74,7 +90,7 @@ class ChessController(QObject):
         self._load(self._initial)
 
     def load_position(self, position):
-        """Load a reviewed FEN. Loading clears move/undo history."""
+        """Start a new tree from a reviewed FEN; caller confirms discarding old lines."""
         if self.can_load:
             self._load(position)
 
@@ -85,7 +101,7 @@ class ChessController(QObject):
         self.clear_selection()
         self._set_phase('syncing')
         self.status_changed.emit('Loading position…')
-        self._send('load_position', lambda: self.referee.load_position(position))
+        self._send('load_position', lambda: self.referee.load_position(position), 'new_tree')
 
     def _refresh(self):
         self.legal_moves = ()
@@ -101,18 +117,33 @@ class ChessController(QObject):
         context = self._pending[2]
         self._pending = None
 
-        if action in ('load_position', 'play_move', 'undo'):
-            self.position = result
-            if action == 'load_position':
-                self._history.clear()
-            elif action == 'play_move':
-                self._history.append(context)
-            else:
-                self._history.pop()
-            self.last_move = self._history[-1] if self._history else None
-            self.clear_selection()
-            self.position_changed.emit(result)
-            self.last_move_changed.emit(self.last_move)
+        # Navigation is a transaction: don't publish intermediate replay boards.
+        if context == 'replay_root':
+            if result.fen != self.tree.root.position.fen:
+                self._on_fatal('Referee returned a different starting FEN during replay')
+                return
+            self._replay_next()
+        elif isinstance(context, tuple) and context[0] == 'replay_move':
+            node = self.tree.node(context[1])
+            if result.fen != node.position.fen:
+                self._on_fatal('Referee replay disagreed with a stored position')
+                return
+            self._replay_next()
+        elif action == 'load_position':
+            self.tree = GameTree(result)
+            self._publish_current()
+            self._refresh()
+        elif action == 'san':
+            annotated_move = replace(context, san=result)
+            self._send('play_move', lambda: self.referee.play_move(annotated_move), annotated_move)
+        elif action == 'play_move':
+            try:
+                node = self.tree.add_child(self.tree.current.node_id, context, result)
+                self.tree.select(node.node_id)
+            except (KeyError, ValueError) as error:
+                self._on_fatal(str(error))
+                return
+            self._publish_current()
             self._refresh()
         elif action == 'legal_moves':
             self.legal_moves = result
@@ -201,18 +232,75 @@ class ChessController(QObject):
             self._play(move)
 
     def _play(self, move):
-        self.clear_selection()
-        self._set_phase('moving')
-        self.status_changed.emit(f'Playing {move.uci}…')
-        self._send('play_move', lambda: self.referee.play_move(move), move)
-
-    def undo(self):
-        if not self.can_undo:
+        existing = self.tree.child_for_move(self.tree.current.node_id, move.uci)
+        if existing is not None:
+            self.go_to(existing.node_id)
             return
         self.clear_selection()
         self._set_phase('moving')
-        self.status_changed.emit('Undoing move…')
-        self._send('undo', self.referee.undo)
+        self.status_changed.emit(f'Playing {move.uci}…')
+        # SAN must be requested BEFORE the move changes the referee's position.
+        self._send('san', lambda: self.referee.san(move), move)
+
+    def _publish_current(self):
+        self.position = self.tree.current.position
+        self.last_move = self.tree.current.move
+        self.clear_selection()
+        self.position_changed.emit(self.position)
+        self.last_move_changed.emit(self.last_move)
+        self.tree_changed.emit()
+
+    def go_to(self, node_id):
+        """Restore a node by replaying its entire path from the starting FEN.
+
+        FEN alone cannot restore repetition history. Replay also leaves the
+        referee's own undo stack and draw detection consistent with the tree.
+        """
+        if not self.can_load or self.tree is None:
+            return
+        if node_id == self.tree.current.node_id:
+            return
+        path = self.tree.path_to(node_id)
+        self._replay_target = node_id
+        self._replay_path = deque(path)
+        self.clear_selection()
+        self.legal_moves = ()
+        self._set_phase('replaying')
+        self.status_changed.emit('Restoring selected position…')
+        self._send('load_position',
+                   lambda: self.referee.load_position(self.tree.root.position),
+                   'replay_root')
+
+    def _replay_next(self):
+        if self._replay_path:
+            node = self._replay_path.popleft()
+            self._send('play_move', lambda: self.referee.play_move(node.move),
+                       ('replay_move', node.node_id))
+        else:
+            self.tree.select(self._replay_target)
+            self._replay_target = None
+            self._publish_current()
+            self._refresh()
+
+    def previous(self):
+        if self.can_previous:
+            self.go_to(self.tree.current.parent_id)
+
+    def next(self):
+        if self.can_next:
+            self.go_to(self.tree.next_id())
+
+    def first(self):
+        if self.can_previous:
+            self.go_to(self.tree.root.node_id)
+
+    def last(self):
+        if self.can_next:
+            self.go_to(self.tree.last_id())
+
+    def undo(self):
+        """Move to the parent without deleting the continuation."""
+        self.previous()
 
     def _on_failed(self, request_id, action, message):
         if self.phase in ('closing', 'closed', 'failed'):
@@ -221,11 +309,16 @@ class ChessController(QObject):
             return
         self._pending = None
         self.clear_selection()
+        if self._replay_target is not None:
+            # The referee may be partway through a restored line; never enable
+            # input against the old displayed position after a replay failure.
+            self._on_fatal('Could not restore the selected line: ' + message)
+            return
         # Rejected commands leave the accepted referee position unchanged.
         # Refresh before accepting another click. Transport failures will
         # also emit fatal_error; the GUI never blindly retries a move.
         self._notice = message
-        if action in ('load_position', 'play_move', 'undo') and self.position is not None:
+        if action in ('load_position', 'play_move', 'san') and self.position is not None:
             self._set_phase('syncing')
             # Let a following fatal_error signal disable recovery first.
             QTimer.singleShot(0, self._recover_rejection)
@@ -240,6 +333,8 @@ class ChessController(QObject):
         if self.phase in ('closing', 'closed', 'failed'):
             return
         self._pending = None
+        self._replay_target = None
+        self._replay_path.clear()
         self.legal_moves = ()
         self._promotion_moves = ()
         self.clear_selection()
@@ -251,6 +346,8 @@ class ChessController(QObject):
         if self.phase in ('closing', 'closed'):
             return
         self._pending = None
+        self._replay_target = None
+        self._replay_path.clear()
         self._promotion_moves = ()
         self.clear_selection()
         self._set_phase('closing')
