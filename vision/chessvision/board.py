@@ -408,3 +408,66 @@ def find_corners(image: np.ndarray, method: str = "auto") -> Optional[Corners]:
             if method == "learned":
                 raise
     return find_corners_classical(image)
+
+
+# ---------------------------------------------------------------- crops for the square classifier (pass V3)
+CELL = 64                  # pixels per square in the classifier warp
+CROP_W, CROP_H = 96, 128   # one crop: 1.5 squares wide, 2 squares tall (the square plus one above it)
+
+
+def canonical_order(c: np.ndarray) -> np.ndarray:
+    """TL, TR, BR, BL by image geometry: clockwise on screen around the centroid, starting at min x+y."""
+    c = np.asarray(c, dtype=np.float32)
+    ctr = c.mean(axis=0)
+    c = c[np.argsort(np.arctan2(c[:, 1] - ctr[1], c[:, 0] - ctr[0]))]
+    return np.roll(c, -int(np.argmin(c.sum(axis=1))), axis=0)
+
+
+def warp_for_crops(image: np.ndarray, corners: Corners, cell: int = CELL) -> np.ndarray:
+    """Top-down view with the camera at the bottom edge and a one-square border: (10*cell)^2 pixels.
+
+    The corners are put in image order first, so pieces always lean towards the top of the
+    result whatever side of the board the photo was taken from. Which side holds rank 1 is
+    then a separate question (see grid_of_square).
+    """
+    size = 10 * cell
+    dst = np.array([[cell, cell], [9 * cell, cell], [9 * cell, 9 * cell], [cell, 9 * cell]], dtype=np.float32)
+    H = cv2.getPerspectiveTransform(canonical_order(corners), dst)
+    return cv2.warpPerspective(image, H, (size, size), flags=cv2.INTER_AREA)
+
+
+def grid_crops(warped: np.ndarray, cell: int = CELL) -> np.ndarray:
+    """(64, CROP_H, CROP_W, 3) crops of a warp_for_crops image, row-major from the top-left cell.
+
+    Each crop holds its square in the lower half plus the square above it and a quarter square
+    on each side: a tall piece viewed at a low angle reaches well into the square behind it.
+    """
+    out = np.empty((64, 2 * cell, cell + cell // 2, 3), dtype=warped.dtype)
+    for row in range(8):
+        for col in range(8):
+            x0 = cell + col * cell - cell // 4
+            out[row * 8 + col] = warped[row * cell:(row + 2) * cell, x0:x0 + cell + cell // 2]
+    return out
+
+
+def grid_of_square(orientation: int) -> np.ndarray:
+    """g[sq] = grid cell (row*8+col, as in grid_crops) that shows engine square sq.
+
+    orientation 0: White sits at the camera (a1 bottom-left). Each +1 turns the board a
+    quarter turn clockwise on screen: 1 = a-file at the top, 2 = Black at the camera, 3 = a-file at the bottom.
+    """
+    g = np.empty(64, dtype=np.int64)
+    for sq in range(64):
+        col, row = sq & 7, 7 - (sq >> 3)
+        for _ in range(orientation % 4):
+            col, row = 7 - row, col
+        g[sq] = row * 8 + col
+    return g
+
+
+def orientation_from_named(corners: Corners, named: Corners) -> int:
+    """Orientation of `corners` given the same board's corners `named` from White's side
+    (a8, h8, h1, a1 corner in that order, as ChessReD annotates them)."""
+    c, named = canonical_order(corners), np.asarray(named, dtype=np.float32)
+    cost = [float(np.abs(np.roll(c, -k, axis=0) - named).sum()) for k in range(4)]
+    return int(np.argmin(cost))

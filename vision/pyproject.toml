@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "chessvision"
 version = "0.1.0"
-description = "Photo -> move -> PGN front end for the chess-c engine (pass V1: engine bridge + decoder)"
+description = "Photo -> move -> PGN front end for the chess-c engine (board detection, square classifier, engine-as-decoder)"
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.24", "opencv-python-headless>=4.8"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "chess>=1.10"]
 ml = ["torch>=2.2", "torchvision>=0.17"]
+export = ["onnx>=1.16", "onnxruntime>=1.18"]
 
 [tool.setuptools.packages.find]
 where = ["."]

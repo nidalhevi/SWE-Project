@@ -53,3 +53,44 @@ def test_scholars_mate_result_tag(engine):
     assert res.status == "checkmate"
     assert res.pgn().rstrip().endswith("1-0")
     assert "Qxf7#" in res.pgn()
+
+
+def test_unreadable_photo_is_recovered_with_the_next_one(engine):
+    """A photo that explains no move (uniform probabilities, as after a failed board detection)
+    is held and decoded together with the following photo instead of being forced into a move."""
+    import numpy as np
+    from chessvision.labels import placement_from_fen
+    from chessvision.pipeline import decode_game
+    from chessvision.synthetic import one_hot
+    moves = ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"]
+    engine.position()
+    observations = []
+    for m in moves:
+        engine.move(m)
+        observations.append(one_hot(placement_from_fen(engine.fen())))
+    observations[2] = np.full((64, 13), 1.0 / 13)          # the photo after g1f3 is garbage
+    res = decode_game(observations, engine)
+    assert res.ucis == moves
+    assert [p.recovered for p in res.plies] == [False, False, True, True, False]
+
+
+def test_photo_of_a_shifted_grid_is_held_not_played(engine):
+    """A confident reading of the wrong board (the grid found one file off) fits no legal move:
+    the decoder must hold it rather than play whichever wrong move happens to score best."""
+    import numpy as np
+    from chessvision.labels import placement_from_fen
+    from chessvision.pipeline import GameDecoder
+    from chessvision.synthetic import one_hot
+    engine.position()
+    engine.move("e2e4")
+    after = np.array(placement_from_fen(engine.fen())).reshape(8, 8)
+    shifted = np.roll(after, 1, axis=1).reshape(64).tolist()   # every piece one file to the right
+    engine.position()
+    dec = GameDecoder(engine)
+    assert dec.feed(one_hot(shifted)) == [] and dec.held is not None
+    engine.position()
+    engine.move("e2e4")
+    engine.move("e7e5")
+    two_later = one_hot(placement_from_fen(engine.fen()))
+    engine.position()
+    assert [p.uci for p in dec.feed(two_later)] == ["e2e4", "e7e5"]
