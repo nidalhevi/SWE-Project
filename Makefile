@@ -17,7 +17,8 @@
 ifeq ($(origin CC),default)
 CC := clang
 endif
-CFLAGS  := -std=c17 -Wall -Wextra -Werror -Wshadow -Isrc
+# -pthread: src/perft.c splits perft over POSIX threads (pass 3).
+CFLAGS  := -std=c17 -Wall -Wextra -Werror -Wshadow -Isrc -pthread
 
 # -fno-sanitize-recover=all: any UB report aborts the run instead of just
 # printing, so `make test` cannot be green while UBSan is complaining.
@@ -92,6 +93,18 @@ test: debug release $(TEST_BINS)
 	$(call expect_exit,$(DEBUG_BIN) pgn Makefile,2)
 	$(call expect_exit,$(DEBUG_BIN) pgn fuzz/corpus_pgn/scholars_mate.pgn,0)
 	$(call expect_exit,$(DEBUG_BIN) play "garbage",2)
+	$(call expect_exit,$(DEBUG_BIN) perft-copy,2)
+	$(call expect_exit,$(DEBUG_BIN) perft-copy 64,2)
+	$(call expect_exit,$(DEBUG_BIN) perft-mt 4,2)
+	$(call expect_exit,$(DEBUG_BIN) perft-mt 0 3,2)
+	$(call expect_exit,$(DEBUG_BIN) perft-mt 65 3,2)
+	$(call expect_exit,$(DEBUG_BIN) perft-mt 4 3,0)
+	$(call expect_exit,$(DEBUG_BIN) search,2)
+	$(call expect_exit,$(DEBUG_BIN) search 0,2)
+	$(call expect_exit,$(DEBUG_BIN) search 65,2)
+	$(call expect_exit,$(DEBUG_BIN) search 2 "garbage",2)
+	$(call expect_exit,$(DEBUG_BIN) search 2,0)
+	$(call expect_exit,$(DEBUG_BIN) uci < /dev/null,0)
 	@echo "== python-chess (oracle for tools/diff_vs_python_chess.py)"
 	@if python3 -c "import chess" 2>/dev/null; then \
 	  echo "ok   python-chess $$(python3 -c 'import chess; print(chess.__version__)')"; \

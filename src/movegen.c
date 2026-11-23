@@ -1,23 +1,18 @@
-/* movegen.c — attack detection and move generation on the mailbox board.
+/* movegen.c — attack detection and move generation.
  *
- * Directions are (file delta, rank delta) pairs and step() refuses to leave
- * the board, so there is no wrap-around to worry about anywhere. gen_legal()
- * filters the pseudo-legal list by replaying each move on a 64-int scratch
- * copy of the board and asking whether our king is attacked there — far
- * cheaper than copying the whole Position with its undo stack.
+ * Pawns and castling read the mailbox board; step() refuses to leave the
+ * board, so there is no wrap-around to worry about. Knights, kings and the
+ * sliders take their target squares from the attack tables. Attack
+ * detection uses the bitboards (bitboard.h, pass 3); gen_legal() filters the
+ * pseudo-legal list by asking whether our king would be attacked after each
+ * move, which needs only the changed occupied set, not a played position.
  */
 #include "movegen.h"
+#include "bitboard.h"
 #include "board.h"
 
 #include <assert.h>
 #include <string.h>
-
-typedef struct { int df, dr; } Dir;
-
-static const Dir KNIGHT_DIRS[8] = {{1,2},{2,1},{2,-1},{1,-2},{-1,-2},{-2,-1},{-2,1},{-1,2}};
-static const Dir KING_DIRS[8]   = {{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1},{1,-1}};
-static const Dir BISHOP_DIRS[4] = {{1,1},{-1,1},{-1,-1},{1,-1}};
-static const Dir ROOK_DIRS[4]   = {{1,0},{0,1},{-1,0},{0,-1}};
 
 /* Square reached from sq by one (df, dr) step, or NO_SQUARE if off the board. */
 static Square step(Square sq, int df, int dr)
@@ -32,47 +27,29 @@ static int pawn_dir(Color c) { return c == WHITE ? 1 : -1; }
 
 /* ------------------------------------------------------------- attacks -- */
 
-/* Does a `by`-coloured piece `a` or `b` sit on the first occupied square
- * along any of the given rays from sq? */
-static bool slider_hits(const int board[SQUARE_NB], Square sq, const Dir *dirs, int n,
-                        Piece a, Piece b)
+/* True iff a piece of colour `by` attacks sq, on a board whose occupied
+ * squares are `occ` and from which the pieces on `gone` have been removed.
+ * The two extra arguments let gen_legal ask "and after this move?" without
+ * building the position: a move only changes occ and removes a captured piece.
+ * A `by` pawn attacks sq exactly when a pawn of the other colour on sq would attack it. */
+static bool attacked(const Position *pos, Square sq, Color by, Bitboard occ, Bitboard gone)
 {
-    for (int i = 0; i < n; i++) {
-        Square s = step(sq, dirs[i].df, dirs[i].dr);
-        while (s != NO_SQUARE && board[s] == EMPTY) s = step(s, dirs[i].df, dirs[i].dr);
-        if (s != NO_SQUARE && (board[s] == a || board[s] == b)) return true;
-    }
-    return false;
-}
-
-static bool leaper_hits(const int board[SQUARE_NB], Square sq, const Dir *dirs, int n, Piece p)
-{
-    for (int i = 0; i < n; i++) {
-        Square s = step(sq, dirs[i].df, dirs[i].dr);
-        if (s != NO_SQUARE && board[s] == p) return true;
-    }
-    return false;
-}
-
-/* True iff a piece of colour `by` on `board` attacks sq. */
-static bool attacked_on_board(const int board[SQUARE_NB], Square sq, Color by)
-{
-    /* A `by` pawn attacks sq from one rank behind (relative to its direction). */
-    Piece pawn = make_piece(by, PAWN);
-    Square l = step(sq, -1, -pawn_dir(by)), r = step(sq, 1, -pawn_dir(by));
-    if ((l != NO_SQUARE && board[l] == pawn) || (r != NO_SQUARE && board[r] == pawn)) return true;
-
-    if (leaper_hits(board, sq, KNIGHT_DIRS, 8, make_piece(by, KNIGHT))) return true;
-    if (leaper_hits(board, sq, KING_DIRS, 8, make_piece(by, KING))) return true;
-    Piece queen = make_piece(by, QUEEN);
-    if (slider_hits(board, sq, BISHOP_DIRS, 4, make_piece(by, BISHOP), queen)) return true;
-    return slider_hits(board, sq, ROOK_DIRS, 4, make_piece(by, ROOK), queen);
+    const Bitboard *bb = pos->bb;
+    Color other = by == WHITE ? BLACK : WHITE;
+    if (bb_pawn_attacks(other, sq) & bb[make_piece(by, PAWN)] & ~gone) return true;
+    if (bb_knight_attacks(sq) & bb[make_piece(by, KNIGHT)] & ~gone) return true;
+    if (bb_king_attacks(sq) & bb[make_piece(by, KING)]) return true;
+    Bitboard queens = bb[make_piece(by, QUEEN)];
+    Bitboard diagonal = (bb[make_piece(by, BISHOP)] | queens) & ~gone;
+    if (diagonal != 0 && (bb_bishop_attacks(sq, occ) & diagonal)) return true;
+    Bitboard straight = (bb[make_piece(by, ROOK)] | queens) & ~gone;
+    return straight != 0 && (bb_rook_attacks(sq, occ) & straight);
 }
 
 bool is_square_attacked(const Position *pos, Square sq, Color by)
 {
     assert(sq >= 0 && sq < SQUARE_NB);
-    return attacked_on_board(pos->board, sq, by);
+    return attacked(pos, sq, by, pos->occ, 0);
 }
 
 bool in_check(const Position *pos)
@@ -122,30 +99,21 @@ static void gen_pawn(const Position *pos, MoveList *list, Square from)
     }
 }
 
-/* Knights and kings: one step in each direction, onto empty or enemy squares. */
-static void gen_leaper(const Position *pos, MoveList *list, Square from, const Dir *dirs, int n)
+/* Add a move from `from` to every square in `targets`; landing on an occupied square is a capture. */
+static void add_targets(const Position *pos, MoveList *list, Square from, Bitboard targets)
 {
-    for (int i = 0; i < n; i++) {
-        Square to = step(from, dirs[i].df, dirs[i].dr);
-        if (to == NO_SQUARE) continue;
-        Piece target = pos->board[to];
-        if (target == EMPTY) add_move(list, from, to, NO_TYPE, NORMAL);
-        else if (piece_color(target) != pos->side_to_move) add_move(list, from, to, NO_TYPE, CAPTURE);
+    while (targets != 0) {
+        Square to = bb_lsb(targets);
+        targets &= targets - 1;   /* clear the lowest set bit */
+        add_move(list, from, to, NO_TYPE, (pos->occ & bb_of(to)) ? CAPTURE : NORMAL);
     }
 }
 
-/* Bishops, rooks, queens: slide until something is hit; capture it if enemy. */
-static void gen_slider(const Position *pos, MoveList *list, Square from, const Dir *dirs, int n)
+/* Every square occupied by a piece of colour c. */
+static Bitboard pieces_of(const Position *pos, Color c)
 {
-    for (int i = 0; i < n; i++) {
-        for (Square to = step(from, dirs[i].df, dirs[i].dr); to != NO_SQUARE;
-             to = step(to, dirs[i].df, dirs[i].dr)) {
-            Piece target = pos->board[to];
-            if (target == EMPTY) { add_move(list, from, to, NO_TYPE, NORMAL); continue; }
-            if (piece_color(target) != pos->side_to_move) add_move(list, from, to, NO_TYPE, CAPTURE);
-            break;
-        }
-    }
+    const Bitboard *bb = pos->bb + (c == WHITE ? WP : BP);
+    return bb[0] | bb[1] | bb[2] | bb[3] | bb[4] | bb[5];
 }
 
 /* Castling: right still held, squares between king and rook empty, and the
@@ -177,17 +145,18 @@ int gen_pseudo_legal(const Position *pos, MoveList *out)
 {
     assert(board_consistent(pos));
     out->count = 0;
+    Bitboard own = pieces_of(pos, pos->side_to_move);
     for (Square sq = 0; sq < SQUARE_NB; sq++) {
         Piece p = pos->board[sq];
         if (p == EMPTY || piece_color(p) != pos->side_to_move) continue;
         switch (piece_type(p)) {
         case PAWN:   gen_pawn(pos, out, sq); break;
-        case KNIGHT: gen_leaper(pos, out, sq, KNIGHT_DIRS, 8); break;
-        case BISHOP: gen_slider(pos, out, sq, BISHOP_DIRS, 4); break;
-        case ROOK:   gen_slider(pos, out, sq, ROOK_DIRS, 4); break;
-        case QUEEN:  gen_slider(pos, out, sq, BISHOP_DIRS, 4);
-                     gen_slider(pos, out, sq, ROOK_DIRS, 4); break;
-        case KING:   gen_leaper(pos, out, sq, KING_DIRS, 8);
+        case KNIGHT: add_targets(pos, out, sq, bb_knight_attacks(sq) & ~own); break;
+        case BISHOP: add_targets(pos, out, sq, bb_bishop_attacks(sq, pos->occ) & ~own); break;
+        case ROOK:   add_targets(pos, out, sq, bb_rook_attacks(sq, pos->occ) & ~own); break;
+        case QUEEN:  add_targets(pos, out, sq, (bb_bishop_attacks(sq, pos->occ) |
+                                                 bb_rook_attacks(sq, pos->occ)) & ~own); break;
+        case KING:   add_targets(pos, out, sq, bb_king_attacks(sq) & ~own);
                      gen_castling(pos, out); break;
         default:     assert(!"bad piece type");
         }
@@ -197,23 +166,25 @@ int gen_pseudo_legal(const Position *pos, MoveList *out)
 
 /* ----------------------------------------------------------- legal moves -- */
 
-/* Replay m on a scratch copy of the board and report whether our king is
- * safe afterwards. Promotion does not matter for king safety, so the pawn
- * is simply moved; castling moves the rook too, for a faithful board. */
+/* Is our king safe after m? Nothing is copied or played: the occupied set
+ * after the move is the old one with `from` cleared and `to` set, and the only
+ * enemy pieces that disappear are the one on `to` and an en-passant victim.
+ * Castling moves the rook as well, for a faithful occupied set. */
 static bool leaves_king_safe(const Position *pos, Move m)
 {
-    int board[SQUARE_NB];
-    memcpy(board, pos->board, sizeof board);
     Color us = pos->side_to_move, them = us == WHITE ? BLACK : WHITE;
-
-    if (m.flags & EN_PASSANT) board[m.to - 8 * pawn_dir(us)] = EMPTY;   /* the captured pawn */
-    if (m.flags & CASTLE_K) { board[m.to - 1] = board[m.to + 1]; board[m.to + 1] = EMPTY; }
-    if (m.flags & CASTLE_Q) { board[m.to + 1] = board[m.to - 2]; board[m.to - 2] = EMPTY; }
-    board[m.to] = board[m.from];
-    board[m.from] = EMPTY;
+    Bitboard gone = bb_of(m.to);
+    Bitboard occ = (pos->occ & ~bb_of(m.from)) | gone;
+    if (m.flags & EN_PASSANT) {
+        Bitboard victim = bb_of(m.to - 8 * pawn_dir(us));
+        occ &= ~victim;
+        gone |= victim;
+    }
+    if (m.flags & CASTLE_K) occ = (occ & ~bb_of(m.to + 1)) | bb_of(m.to - 1);
+    if (m.flags & CASTLE_Q) occ = (occ & ~bb_of(m.to - 2)) | bb_of(m.to + 1);
 
     Square king = piece_type(pos->board[m.from]) == KING ? m.to : pos->king_sq[us];
-    return !attacked_on_board(board, king, them);
+    return !attacked(pos, king, them, occ, gone);
 }
 
 bool has_legal_en_passant(const Position *pos)

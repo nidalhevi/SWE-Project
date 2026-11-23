@@ -8,6 +8,10 @@
  *   chess play [fen]                     two-player terminal game with undo (pass 2)
  *   chess pgn <file>                     replay a PGN file; print the final FEN and status (pass 2)
  *   chess batch                          line protocol on stdin for tools (see play.h) (pass 2)
+ *   chess perft-copy <depth> [fen]       perft by copy-make instead of make/unmake (pass 3, docs/perf.md)
+ *   chess perft-mt <threads> <depth> [fen]  perft with the root moves split over threads (pass 3)
+ *   chess uci                            UCI protocol on stdin for chess GUIs (pass 3)
+ *   chess search <depth> [fen]           best move at that depth: "bestmove <uci> score <cp> nodes <n>" (pass 3)
  *
  * Exit codes: 0 ok · 1 a test failed · 2 invalid FEN or argument · 3 not implemented.
  * A FEN may be one quoted argument or its six fields as separate arguments.
@@ -18,6 +22,8 @@
 #include "perft.h"
 #include "pgn.h"
 #include "play.h"
+#include "search.h"
+#include "uci.h"
 #include "game.h"
 
 #include <errno.h>
@@ -38,6 +44,10 @@ static const char USAGE[] =
     "       chess play [fen]\n"
     "       chess pgn <file>\n"
     "       chess batch\n"
+    "       chess perft-copy <depth> [fen]\n"
+    "       chess perft-mt <threads> <depth> [fen]\n"
+    "       chess uci\n"
+    "       chess search <depth> [fen]\n"
     "A FEN may be quoted as one argument or given as six separate arguments.\n";
 
 /* Print a message and exit with EXIT_INVALID_INPUT. Never returns. */
@@ -96,6 +106,28 @@ static int cmd_perft(int argc, char **argv)
     Position pos;
     load_position(&pos, argc, argv, 3);
     printf("%" PRIu64 "\n", perft(&pos, depth));
+    return EXIT_SUCCESS;
+}
+
+static int cmd_perft_copy(int argc, char **argv)
+{
+    if (argc < 3) fail("perft-copy needs a depth%s", "");
+    int depth = parse_depth(argv[2]);
+    if (depth >= MAX_SEARCH_DEPTH) fail("perft-copy needs a depth below 64, got '%s'", argv[2]);
+    static Position pos;
+    load_position(&pos, argc, argv, 3);
+    printf("%" PRIu64 "\n", perft_copy(&pos, depth));
+    return EXIT_SUCCESS;
+}
+
+static int cmd_perft_mt(int argc, char **argv)
+{
+    if (argc < 4) fail("perft-mt needs <threads> <depth>%s", "");
+    int threads = parse_depth(argv[2]), depth = parse_depth(argv[3]);
+    if (threads < 1 || threads > PERFT_MAX_THREADS) fail("threads must be between 1 and 64, got '%s'", argv[2]);
+    static Position pos;
+    load_position(&pos, argc, argv, 4);
+    printf("%" PRIu64 "\n", perft_threads(&pos, depth, threads));
     return EXIT_SUCCESS;
 }
 
@@ -224,6 +256,21 @@ static int cmd_pgn(int argc, char **argv)
     return EXIT_SUCCESS;
 }
 
+static int cmd_search(int argc, char **argv)
+{
+    if (argc < 3) fail("search needs a depth%s", "");
+    int depth = parse_depth(argv[2]);
+    if (depth < 1 || depth > MAX_SEARCH_DEPTH) fail("search needs a depth between 1 and 64, got '%s'", argv[2]);
+    static Position pos;
+    load_position(&pos, argc, argv, 3);
+    SearchLimits limits = { depth, 0 };
+    SearchResult r = search_position(&pos, limits, NULL);
+    char uci[6] = "0000";
+    if (r.has_move) move_to_uci(r.best, uci);
+    printf("bestmove %s score %d nodes %" PRIu64 "\n", uci, r.score, r.nodes);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -232,6 +279,8 @@ int main(int argc, char **argv)
     }
     const char *cmd = argv[1];
     if (strcmp(cmd, "perft") == 0)       return cmd_perft(argc, argv);
+    if (strcmp(cmd, "perft-copy") == 0)  return cmd_perft_copy(argc, argv);
+    if (strcmp(cmd, "perft-mt") == 0)    return cmd_perft_mt(argc, argv);
     if (strcmp(cmd, "divide") == 0)      return cmd_divide(argc, argv);
     if (strcmp(cmd, "moves") == 0)       return cmd_moves(argc, argv);
     if (strcmp(cmd, "perft-suite") == 0) return cmd_perft_suite(argc, argv);
@@ -239,6 +288,8 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "play") == 0)        return cmd_play(argc, argv);
     if (strcmp(cmd, "pgn") == 0)         return cmd_pgn(argc, argv);
     if (strcmp(cmd, "batch") == 0)       return batch_loop(stdin, stdout);
+    if (strcmp(cmd, "uci") == 0)         return uci_loop(stdin, stdout);
+    if (strcmp(cmd, "search") == 0)      return cmd_search(argc, argv);
     fputs(USAGE, stderr);
     fail("unknown subcommand '%s'", cmd);
 }

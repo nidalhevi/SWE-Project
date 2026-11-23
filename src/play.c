@@ -7,11 +7,13 @@
 #include "movegen.h"
 #include "pgn.h"
 #include "san.h"
+#include "search.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #define START_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+enum { ENGINE_MOVETIME_MS = 1000 };
 
 /* Read one line without its newline; false at end of input. */
 static bool read_line(FILE *in, char *buf, size_t n)
@@ -57,7 +59,23 @@ static void show(const Position *pos, FILE *out)
 static void play_help(FILE *out)
 {
     fputs("Type a move as SAN (Nf3, exd5, O-O, e8=Q) or UCI (g1f3, e7e8q).\n"
-          "Commands: moves  undo  fen  pgn  help  quit\n", out);
+          "Commands: go (the engine plays this move)  moves  undo  fen  pgn  help  quit\n", out);
+}
+
+/* "go": let the engine choose and play the move for the side to move (one second of thought). */
+static void engine_move(Position *pos, FILE *out)
+{
+    if (game_state(pos) != ONGOING || pos->ply >= MAX_PLY - MAX_SEARCH_DEPTH) {
+        fputs("The game is over: undo or quit.\n", out);
+        return;
+    }
+    SearchLimits limits = { 0, ENGINE_MOVETIME_MS };
+    SearchResult r = search_position(pos, limits, NULL);
+    char san[SAN_MAX_LEN];
+    move_to_san(pos, r.best, san);
+    fprintf(out, "Engine plays %s (depth %d, score %d)\n", san, r.depth, r.score);
+    make_move(pos, r.best);
+    show(pos, out);
 }
 
 void play_loop(Position *pos, FILE *in, FILE *out)
@@ -73,6 +91,7 @@ void play_loop(Position *pos, FILE *in, FILE *out)
         if (strcmp(line, "quit") == 0) break;
         if (strcmp(line, "help") == 0) { play_help(out); continue; }
         if (strcmp(line, "moves") == 0) { print_moves(pos, out, " "); continue; }
+        if (strcmp(line, "go") == 0) { engine_move(pos, out); continue; }
         if (strcmp(line, "fen") == 0) { char fen[FEN_MAX_LEN]; fen_write(pos, fen, sizeof fen); fprintf(out, "%s\n", fen); continue; }
         if (strcmp(line, "pgn") == 0) { char pgn[PGN_MAX_LEN]; pgn_write(pos, pgn, sizeof pgn); fputs(pgn, out); continue; }
         if (strcmp(line, "undo") == 0) {

@@ -1,5 +1,6 @@
 /* board.c — the mailbox board: init, access, consistency check, text helpers. */
 #include "board.h"
+#include "bitboard.h"
 #include "zobrist.h"
 
 #include <assert.h>
@@ -13,6 +14,7 @@ void board_init(Position *pos)
 {
     assert(pos != NULL);
     zobrist_init();
+    bb_init();
     memset(pos, 0, sizeof *pos);   /* board = EMPTY, castling = 0, ply = 0, hash = 0 */
     pos->side_to_move    = WHITE;
     pos->ep_square       = NO_SQUARE;
@@ -31,7 +33,12 @@ void board_set(Position *pos, Square sq, Piece p)
 {
     assert(sq >= 0 && sq < SQUARE_NB);
     assert(p >= EMPTY && p < PIECE_NB);
-    pos->hash ^= ZOB_PIECE[pos->board[sq]][sq] ^ ZOB_PIECE[p][sq];
+    Piece old = pos->board[sq];
+    Bitboard b = 1ULL << sq;
+    pos->hash ^= ZOB_PIECE[old][sq] ^ ZOB_PIECE[p][sq];
+    pos->bb[old] &= ~b;            /* bb[EMPTY] absorbs the no-piece cases; it is never read */
+    pos->bb[p] |= b;
+    pos->occ = p == EMPTY ? pos->occ & ~b : pos->occ | b;
     pos->board[sq] = p;
     if (p == WK) pos->king_sq[WHITE] = sq;
     if (p == BK) pos->king_sq[BLACK] = sq;
@@ -41,7 +48,27 @@ void board_clear(Position *pos, Square sq)
 {
     assert(sq >= 0 && sq < SQUARE_NB);
     pos->hash ^= ZOB_PIECE[pos->board[sq]][sq];
+    pos->bb[pos->board[sq]] &= ~(1ULL << sq);
+    pos->occ &= ~(1ULL << sq);
     pos->board[sq] = EMPTY;
+}
+
+/* The bitboards must say exactly what the mailbox says. */
+static bool bitboards_consistent(const Position *pos)
+{
+    Bitboard occ = 0;
+    for (Square sq = 0; sq < SQUARE_NB; sq++) {
+        Piece p = pos->board[sq];
+        if (p == EMPTY) continue;
+        occ |= 1ULL << sq;
+        if (!(pos->bb[p] & (1ULL << sq))) return false;
+    }
+    Bitboard all = 0;
+    for (Piece p = WP; p < PIECE_NB; p++) {
+        if (all & pos->bb[p]) return false;   /* two pieces on one square */
+        all |= pos->bb[p];
+    }
+    return occ == pos->occ && all == occ;
 }
 
 /* One king per colour, and king_sq must point at it. */
@@ -82,7 +109,8 @@ bool board_consistent(const Position *pos)
     if (pos->castling < 0 || pos->castling > CASTLE_ALL) return false;
     if (pos->halfmove_clock < 0 || pos->fullmove_number < 1) return false;
     if (pos->ply < 0 || pos->ply > MAX_PLY) return false;
-    return kings_consistent(pos) && ep_consistent(pos) && pos->hash == zobrist_hash(pos);
+    return kings_consistent(pos) && ep_consistent(pos) && bitboards_consistent(pos) &&
+           pos->hash == zobrist_hash(pos);
 }
 
 void board_print(const Position *pos, FILE *out)
