@@ -85,8 +85,22 @@ Zobrist hashing + threefold repetition; fifty-move and insufficient-material dra
 ## Pass 3 — engine and performance
 Negamax + alpha-beta, iterative deepening, quiescence, MVV-LVA; material + piece-square-table evaluation in centipawns; UCI protocol; cutechess-cli self-play for an Elo estimate. Performance ladder on perft, one measured rung at a time: bitboards for attack detection → lookup tables (leapers) → magic tables (sliders) → copy-make vs make/unmake → root-split perft with pthreads. Each rung: nodes/s before and after, recorded in docs/perf.md. Timings on the Macs with `hyperfine`; hardware counters on the course Linux VM with `perf stat`.
 
+**Status (2026-11-18): built.** `src/eval.c` (material + piece-square tables), `src/search.c` (negamax
+alpha-beta, iterative deepening, quiescence, MVV-LVA, check extension, draws by repetition / fifty moves /
+material seen inside the tree), `src/uci.c` (`chess uci`), `chess search <depth> [fen]`, and `go` in `chess play`
+so a human can play the engine in the terminal. Ladder: `src/bitboard.c` (rungs 1 to 3), `chess perft-copy`
+(rung 4), `chess perft-mt <threads> <depth>` (rung 5). Numbers and what each rung taught us: docs/perf.md
+(one thread 2.8x to 3.4x, all cores 26x; roughly 1750 to 1950 against strength-limited Stockfish).
+Deviations: matches ran with `tools/match.py` (python-chess over UCI) because cutechess-cli is not packaged for
+Homebrew; the engine speaks plain UCI, so cutechess-cli or Cute Chess can drive it unchanged. `perf stat` on the
+Linux VM is still to do. UCI `stop` is not supported (the search runs in the command thread and always has a limit).
+
 ## Out of scope for the course deadline
 NNUE, opening books, endgame tablebases, GUI, photo input (the Python starter kit covers that path separately).
+
+**Changed 2026-11-19:** the GUI is now in scope. `chess_app/` (PySide6, branch `nidal/chess-gui`) shows the board
+and talks to this engine through `chess batch`; next it loads a game decoded from photos and analyses the position
+with Stockfish over UCI. The C side stays GUI-free: the GUI is a separate process. Contract: docs/GUI_INTEGRATION.md.
 
 ## Decisions (session 0, 2026-11-07)
 | # | Decision |
