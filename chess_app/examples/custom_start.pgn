@@ -1,0 +1,8 @@
+[Event "Custom position: Black to move on move 42"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+[SetUp "1"]
+[FEN "7k/8/8/8/8/8/8/R6K b - - 0 42"]
+
+42... Kg8 {Move numbering follows the FEN.} 43. Ra8+ Kf7 *

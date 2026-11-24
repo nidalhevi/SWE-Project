@@ -224,6 +224,10 @@ class RefereeClient(QObject):
     def _on_error(self, error) -> None:
         if not self._stopping:
             self._fatal(self._process.errorString())
+        elif self._process.state() == QProcess.ProcessState.NotRunning:
+            # FailedToStart does not emit finished, including when close()
+            # was requested before the startup failure arrived.
+            self._emit_closed()
 
     def _cancel_requests(self, message: str) -> None:
         pending = list(self._queue)

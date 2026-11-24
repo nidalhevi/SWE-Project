@@ -16,6 +16,13 @@ class GameNode:
     children: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class NodeAnnotations:
+    comment: str = ''
+    starting_comment: str = ''
+    nags: tuple[int, ...] = ()
+
+
 class GameTree:
     """The first child is the original/main continuation, never overwritten.
 
@@ -23,10 +30,12 @@ class GameTree:
     This choice does not reorder the children or replace the main line.
     """
 
-    def __init__(self, starting_position: PositionSnapshot):
+    def __init__(self, starting_position: PositionSnapshot, headers=None):
         self._nodes = {0: GameNode(0, starting_position)}
         self._current_id = 0
         self._preferred = {}
+        self.headers = dict(headers or {})
+        self._annotations = {}
 
     @property
     def root(self):
@@ -121,3 +130,17 @@ class GameTree:
         number = before.fen.split()[5]
         separator = '.' if before.turn == 'w' else '...'
         return f'{number}{separator} {node.move.san or node.move.uci}'
+
+    def annotations(self, node_id: int) -> NodeAnnotations:
+        self.node(node_id)
+        return self._annotations.get(node_id, NodeAnnotations())
+
+    def annotate(self, node_id: int, *, comment='', starting_comment='', nags=()):
+        """Merge annotations when identical imported continuations converge."""
+        old = self.annotations(node_id)
+        def merge(first, second):
+            return '\n'.join(part for part in (first, second) if part)
+        self._annotations[node_id] = NodeAnnotations(
+            merge(old.comment, comment), merge(old.starting_comment, starting_comment),
+            tuple(sorted(set(old.nags) | set(nags))),
+        )

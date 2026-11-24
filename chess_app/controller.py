@@ -10,6 +10,7 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QTimer, Signal
 from models import Move, PositionSnapshot, STARTING_FEN
 from game_tree import GameTree
+from pgn_service import PgnError, parse_pgn_text, validate_game
 
 
 class ChessController(QObject):
@@ -22,6 +23,8 @@ class ChessController(QObject):
     problem = Signal(str)
     closed = Signal()
     tree_changed = Signal()
+    import_failed = Signal(str)
+    import_succeeded = Signal()
 
     def __init__(self, referee, parent=None):
         super().__init__(parent)
@@ -39,6 +42,8 @@ class ChessController(QObject):
         self._pending = None
         self._initial = PositionSnapshot(STARTING_FEN)
         self._notice = ''
+        self._import_flow = None
+        self._import_source = 'PGN'
         referee.ready.connect(self._on_ready)
         referee.completed.connect(self._on_completed)
         referee.failed.connect(self._on_failed)
@@ -80,7 +85,10 @@ class ChessController(QObject):
         try:
             request_id = submit()
         except (RuntimeError, ValueError) as error:
-            self._on_fatal(str(error))
+            if self._import_flow is not None:
+                self._abort_import(str(error))
+            else:
+                self._on_fatal(str(error))
             return
         self._pending = (request_id, action, context)
 
@@ -117,6 +125,10 @@ class ChessController(QObject):
         context = self._pending[2]
         self._pending = None
 
+        if isinstance(context, tuple) and context[0] == 'pgn_import':
+            self._advance_import(result)
+            return
+
         # Navigation is a transaction: don't publish intermediate replay boards.
         if context == 'replay_root':
             if result.fen != self.tree.root.position.fen:
@@ -138,6 +150,12 @@ class ChessController(QObject):
             self._send('play_move', lambda: self.referee.play_move(annotated_move), annotated_move)
         elif action == 'play_move':
             try:
+                mainline = self.tree.mainline()
+                leaf = mainline[-1] if mainline else self.tree.root
+                if self.tree.current.node_id == leaf.node_id:
+                    # Extending a finished recorded main line makes its published
+                    # result unknown again. Adding a side variation does not.
+                    self.tree.headers['Result'] = '*'
                 node = self.tree.add_child(self.tree.current.node_id, context, result)
                 self.tree.select(node.node_id)
             except (KeyError, ValueError) as error:
@@ -250,15 +268,15 @@ class ChessController(QObject):
         self.last_move_changed.emit(self.last_move)
         self.tree_changed.emit()
 
-    def go_to(self, node_id):
+    def go_to(self, node_id, *, force=False):
         """Restore a node by replaying its entire path from the starting FEN.
 
         FEN alone cannot restore repetition history. Replay also leaves the
         referee's own undo stack and draw detection consistent with the tree.
         """
-        if not self.can_load or self.tree is None:
+        if self.tree is None or (not self.can_load and not (force and self.phase == 'importing')):
             return
-        if node_id == self.tree.current.node_id:
+        if node_id == self.tree.current.node_id and not force:
             return
         path = self.tree.path_to(node_id)
         self._replay_target = node_id
@@ -302,13 +320,79 @@ class ChessController(QObject):
         """Move to the parent without deleting the continuation."""
         self.previous()
 
+    def import_image_position(self, position):
+        """Validate a reviewed image draft as a new root using the import transaction.
+
+        Reuse rollback/replay so a rejection also preserves repetition history.
+        The caller confirms replacing the old game before invoking this method.
+        """
+        if not self.can_load:
+            return False
+        if not isinstance(position, PositionSnapshot):
+            raise ValueError('Expected a reviewed PositionSnapshot')
+        text = ('[Event "Image position"]\n[SetUp "1"]\n'
+                f'[FEN "{position.fen}"]\n[Result "*"]\n\n*')
+        self.import_game(parse_pgn_text(text)[0], source='image')
+        return True
+
+    def import_game(self, parsed_game, *, source='PGN'):
+        """Build and validate a temporary tree; publish only after full success."""
+        if not self.can_load:
+            return
+        self._import_source = source
+        self.clear_selection()
+        self._set_phase('importing')
+        self._import_flow = validate_game(parsed_game)
+        self._advance_import()
+
+    def _advance_import(self, result=None):
+        try:
+            request = self._import_flow.send(result)
+        except StopIteration as finished:
+            self._import_flow = None
+            self.tree = finished.value
+            self._notice = ('Imported image position' if self._import_source == 'image'
+                            else f'Imported {len(self.tree) - 1} moves and variations')
+            self._publish_current()
+            self.import_succeeded.emit()
+            self._refresh()
+            return
+        except (PgnError, ValueError, KeyError) as error:
+            self._abort_import(str(error))
+            return
+        self.status_changed.emit(request.description)
+        if request.action in ('load_position', 'play_move', 'san'):
+            submit = lambda: getattr(self.referee, request.action)(request.payload)
+        else:
+            submit = getattr(self.referee, request.action)
+        self._send(request.action, submit, ('pgn_import', request.description))
+
+    def _abort_import(self, message):
+        if self._import_flow is not None:
+            self._import_flow.close()
+            self._import_flow = None
+        label = 'Image' if self._import_source == 'image' else 'PGN'
+        self._notice = f'{label} import failed; previous game restored'
+        self.import_failed.emit(message)
+        # A transport failure emits failed followed by fatal_error. Defer
+        # restoration until that fatal signal has had a chance to stop it.
+        QTimer.singleShot(0, self._restore_after_import_failure)
+
+    def _restore_after_import_failure(self):
+        if self.phase == 'importing':
+            self.go_to(self.tree.current.node_id, force=True)
+
     def _on_failed(self, request_id, action, message):
         if self.phase in ('closing', 'closed', 'failed'):
             return
         if self._pending is None or self._pending[:2] != (request_id, action):
             return
+        context = self._pending[2]
         self._pending = None
         self.clear_selection()
+        if isinstance(context, tuple) and context[0] == 'pgn_import':
+            self._abort_import(context[1] + ': ' + message)
+            return
         if self._replay_target is not None:
             # The referee may be partway through a restored line; never enable
             # input against the old displayed position after a replay failure.
@@ -333,6 +417,9 @@ class ChessController(QObject):
         if self.phase in ('closing', 'closed', 'failed'):
             return
         self._pending = None
+        if self._import_flow is not None:
+            self._import_flow.close()
+            self._import_flow = None
         self._replay_target = None
         self._replay_path.clear()
         self.legal_moves = ()
@@ -346,6 +433,9 @@ class ChessController(QObject):
         if self.phase in ('closing', 'closed'):
             return
         self._pending = None
+        if self._import_flow is not None:
+            self._import_flow.close()
+            self._import_flow = None
         self._replay_target = None
         self._replay_path.clear()
         self._promotion_moves = ()

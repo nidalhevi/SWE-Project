@@ -11,3 +11,8 @@ venv/
 __pycache__/
 *.py[cod]
 build/
+# Generated Python files and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
