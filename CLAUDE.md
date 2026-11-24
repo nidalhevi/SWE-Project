@@ -9,12 +9,16 @@ The spec is SPEC.md; read it before any task. Build only what the current pass i
 - All tests: `make test` (runs under the debug build; must be green before any commit)
 - Perft suite only: `./build/debug/chess perft-suite tests/perft_suite.epd 4`
 - Differential test vs python-chess: `python3 tools/diff_vs_python_chess.py --games 200`
+- Play the engine: `./build/release/chess play` then `go`; UCI for a GUI: `./build/release/chess uci`
+- Perft timings: `tools/bench_perft.sh` (needs hyperfine); matches: `/usr/bin/python3 tools/match.py --help`
+- Photos → PGN (+ JSON for the GUI): `/usr/bin/python3 vision/scripts/run_game.py <folder> -o game.pgn --json game.json`
+- GUI (PySide6, flat imports, run from its folder): `cd chess_app && python main.py`; referee check: `python check_referee.py --bin ../build/release/chess`
 - Fuzz the FEN parser: see docs/FUZZING.md (Apple clang has no libFuzzer; use Homebrew LLVM)
 
 ## Conventions
 - C17, `-Wall -Wextra -Werror`, no external libraries, no dynamic allocation in the hot path.
 - Square indexing is a1 = 0 … h8 = 63 (file fastest), same as python-chess; never introduce a second convention.
-- Representation in pass 1 is the mailbox `int board[64]` from SPEC.md. No bitboards until SPEC.md says so.
+- Representation is the mailbox `int board[64]` from SPEC.md plus, since pass 3, the bitboards in `Position` (`bb[]`, `occ`). Both are updated only through `board_set` / `board_clear`; never write `pos->board[]` directly.
 - Functions under ~40 lines; every public function has a comment stating its precondition and postcondition.
 - `assert()` encodes invariants (board consistency), never input validation. Invalid input returns an error code and the program must not crash.
 - Integer centipawns only; no floating point anywhere in the engine.

@@ -18,18 +18,12 @@ import torch
 import torch.nn as nn
 import torchvision
 
+from .board import canonical_order  # noqa: F401  (re-exported; lives in board.py so it needs no torch)
+
 INPUT = 320
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 DEFAULT_WEIGHTS = os.path.join(os.path.dirname(__file__), "..", "weights", "corner_net.pt")
-
-
-def canonical_order(c: np.ndarray) -> np.ndarray:
-    """TL, TR, BR, BL by image geometry: counter-clockwise around the centroid starting at min x+y."""
-    c = np.asarray(c, dtype=np.float32)
-    ctr = c.mean(axis=0)
-    c = c[np.argsort(np.arctan2(c[:, 1] - ctr[1], c[:, 0] - ctr[0]))]
-    return np.roll(c, -int(np.argmin(c.sum(axis=1))), axis=0)
 
 
 class CornerNet(nn.Module):

@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 typedef enum { WHITE = 0, BLACK = 1 } Color;
 
@@ -19,6 +20,9 @@ enum { EMPTY = 0, WP, WN, WB, WR, WQ, WK, BP, BN, BB, BR, BQ, BK, PIECE_NB };
 
 /* Piece types (colourless). PAWN..KING equal the white piece codes. */
 enum { NO_TYPE = 0, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING };
+
+/* One bit per square, bit sq set = "this square is in the set" (a1 = bit 0 ... h8 = bit 63). */
+typedef uint64_t Bitboard;
 
 typedef int Square;
 enum { NO_SQUARE = -1, SQUARE_NB = 64 };
@@ -68,14 +72,27 @@ typedef struct {
     int    fullmove_number;    /* starts at 1, +1 after each black move */
     Square king_sq[2];         /* indexed by Color */
     uint64_t hash;             /* Zobrist key, kept in step by board_set/clear and make_move */
-    Undo   undo[MAX_PLY];      /* undo stack, fixed capacity, no heap */
+    Bitboard bb[PIECE_NB];     /* squares holding each piece code (bb[EMPTY] unused); pass 3 */
+    Bitboard occ;              /* every occupied square; both kept in step by board_set/clear */
     int    ply;                /* number of entries in use on the undo stack */
+    Undo   undo[MAX_PLY];      /* undo stack, fixed capacity, no heap. Kept LAST: everything
+                                * before it is the position itself (about 500 bytes) and can be
+                                * copied on its own, see position_copy_head() */
 } Position;
 
 typedef struct {
     Move moves[MAX_MOVES];
     int  count;
 } MoveList;
+
+/* Pre: src is a consistent position.  Post: dst is the same position with an
+ * empty undo stack: only the bytes before `undo` are copied, not the 50 KB stack.
+ * dst therefore has no history (repetition counts start again from here). */
+static inline void position_copy_head(Position *dst, const Position *src)
+{
+    memcpy(dst, src, offsetof(Position, undo));
+    dst->ply = 0;
+}
 
 /* Process exit codes shared by the CLI and the test Makefile. */
 enum { EXIT_TEST_FAILURE = 1, EXIT_INVALID_INPUT = 2, EXIT_NOT_IMPLEMENTED = 3 };

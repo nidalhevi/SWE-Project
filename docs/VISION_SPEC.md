@@ -19,11 +19,16 @@ SWE-Project/
     chessvision/
       engine.py              EngineClient: one long-lived `chess batch` process (position/move/undo/moves/san/fen/status)
       decoder.py             decode_move(prev_fen, probs[64][13], legal_moves) -> ranked moves with scores
-      board.py               find_corners(image) -> 4 points; warp_topdown(image, corners) -> 8x8 grid of square crops
-      classifier.py          SquareClassifier: MobileNetV3-small, 13 classes, returns softmax per square
-      pipeline.py            photo sequence -> moves -> PGN; human-correction hook
-      data/chessred.py       ChessReD download, split, per-square crop dataset
-    scripts/                 train_classifier.py, eval_decoder.py, run_game.py
+      board.py               find_corners(image) -> 4 points; warp_for_crops + grid_crops -> 64 crops; grid_of_square(orientation)
+      corner_net.py          CornerNet / CornerPredictor: MobileNetV3-small regressing the 4 corners (pass V2)
+      classifier.py          SquareNet / SquareClassifier: MobileNetV3-small, 13 classes, softmax per square; best_orientation
+      pipeline.py            GameDecoder: observations -> moves -> PGN; holds an unreadable photo and recovers it; human-correction hook
+      correction.py          make_prompt: the human-correction prompt (pass V4)
+      photos.py              decode_photos: photos -> board -> crops -> probabilities -> GameDecoder
+      data/chessred.py       ChessReD reader: labels, corners, splits
+    scripts/                 run_game.py (photos -> PGN), train_classifier.py, eval_classifier.py, build_square_cache.py,
+                             export_onnx.py, train_corners.py, eval_corner_net.py, eval_corners.py, eval_decoder.py
+    weights/                 corner_net.pt, square_net.pt, square_net.onnx (4.4 MB each)
     tests/                   pytest; the decoder tests need the C binary at ../build/release/chess
   docs/VISION_SPEC.md        this file
 ```
@@ -33,7 +38,7 @@ items listed per pass below. CI gets a second job: `pytest vision/tests` on ubun
 ## Data model
 - **Square labels** (13): `EMPTY, WP, WN, WB, WR, WQ, WK, BP, BN, BB, BR, BQ, BK`, same order and values as `Piece` in `src/types.h`.
 - **Square indexing**: a1 = 0 … h8 = 63, identical to the engine. The warp step must output crops in this order given the
-  known camera side (white at bottom unless `--black-bottom`); orientation is a pipeline argument, never guessed in pass V1–V3.
+  known camera side (white at bottom unless `--black-bottom`); orientation is a pipeline argument (0..3, see `board.grid_of_square`) or `auto`, which infers it per photo from the previous position (pass V3).
 - **Observation**: `probs: float32[64][13]`, rows sum to 1.
 - **Decoder output**: list of `(uci, score)` sorted by score descending, plus `confidence = score[0] - score[1]`.
 
@@ -75,11 +80,49 @@ outer lines searched with an inward-biased band). Test split, 306 images, 160-ep
 0.4 of a square, which the crop margins absorb; the bar is now **≤5% on ≥90% of the test split and median ≤2%**,
 with the ≤2% rate reported alongside. Debug overlays: `scripts/eval_corners.py --debug-dir`.
 
-### Pass V3 — square classifier
+### Pass V3 — square classifier (built 2026-11-18; see status below)
 `classifier.py` + `scripts/train_classifier.py`: MobileNetV3-small fine-tuned on ChessReD crops produced by V2
 (train/val/test split as published). Export to ONNX. **Done:** per-square accuracy ≥ 95% on the ChessReD test split
 (published end-to-end model: 94.7%); top-1 *move* accuracy ≥ 97% when V1's decoder consumes V3's probabilities on
 ChessReD game sequences; inference < 0.5 s per photo on the Mac (CPU or MPS).
+
+**Status.** Data: the ChessReD2K subset (the 2,078 photos that have corner annotations; 14 / 3 / 3 games for
+train / val / test, split by game, so no test position was seen in training). `build_square_cache.py` warps each
+photo once to a 640x640 top-down view with the camera at the bottom edge (`warp_for_crops`); one crop is a square
+plus the square behind it and a quarter square each side (96x128 px). Train warps use the annotated corners, two
+jittered copies (0.8% and 1.5% of the board side) and our detector's corners; val and test use only the detector's,
+which is what the classifier meets in use. 10 epochs, ~30 min on the Mac GPU. Results on the test split
+(`scripts/eval_classifier.py`, 306 photos, 3 games):
+
+| | ours | bar / published |
+|---|---|---|
+| squares correct | **98.99%** | ≥ 95% (end-to-end model 94.7%) |
+| boards fully correct | 85.9% | (end-to-end model 15.3%) |
+| wrong squares per board | mean 0.65, median 0 | (end-to-end model 3.4) |
+| moves correct, previous position given | **98.04%** | ≥ 97% |
+| whole games decoded exactly, unaided | **3 of 3** (303 plies) | not in the bar |
+| time per photo, whole pipeline, Mac GPU | **70 ms** | < 500 ms |
+
+Validation games: 99.24% squares, 99.39% moves, 2 of 3 games exact (the third is wrong only on its last two plies,
+where the last photo is unreadable and there is no next photo to recover it with).
+
+Three things found on the way, all in the code now:
+- **Every misread move is a board-detection failure**, not a classifier failure: the 6 wrong plies on the test split
+  have 9 to 35 wrong squares each (the grid lands a square off), against a median of 0.
+- **Such a photo is detectable**: even its best move explains it badly (mean log-likelihood per square below -0.6,
+  against about -0.1 for a good photo). `GameDecoder` holds a photo that is unreadable (`MIN_FIT = -0.4`) or
+  ambiguous (gap to the second-best move below the threshold) and decodes it together with the next photo as two
+  plies. Before this, one bad photo derailed the rest of the game (92/102 and 86/102 plies on two test games);
+  after, all three are exact. `MIN_FIT` was set after looking at those test failures, so the validation games are
+  the unbiased check. Limit: two unreadable photos in a row are not recovered (it would need a three-ply search).
+- **Orientation is no longer a required argument.** ChessReD photos are taken from all four sides. Given the
+  position before the move, the orientation that best explains the photo is the right one on 100% of the 636
+  val + test photos (`best_orientation`), so `run_game.py` defaults to `--orientation auto`.
+
+Use: `python3 vision/scripts/run_game.py <folder of photos> -o game.pgn` (one photo per move, file-name order;
+103 photos take 23 s). ONNX: `vision/weights/square_net.onnx`, logits equal to PyTorch's within 1e-5.
+Not done in V3: the full 10,800-photo ChessReD (only ChessReD2K is on disk and has corners), and photos of our own
+board, which is pass V4 and the real test of whether this transfers beyond the dataset's one board and piece set.
 
 ### Pass V4 — the product
 `run_game.py`: a folder of photos (or the camera) → PGN. Human correction: when confidence is below threshold, show
@@ -87,6 +130,15 @@ the warped board, the top-3 candidates and let the user pick or type a move. Fin
 (`pgn` subcommand) and python-chess. **Done:** 10 real games photographed by us (phone, our board) decoded with ≤ 2
 corrections per game; one 2-minute demo video for the presentation. Engine-side: optionally a `pgn` write path over
 `batch` so the Python side never formats PGN itself.
+
+**Status (2026-11-18): tooling built, our own photos not taken yet.** `run_game.py` has `--ask` (the correction
+prompt in `correction.py`: pick a candidate, type a move in SAN or UCI, `s` to decide with the next photo, `n` for
+no move), `--show` (opens the doubtful photo with the detected grid drawn on it), `--truth ref.pgn` (plies agreeing
+with a hand-written record), HEIC input through macOS `sips`, and a final check that both our engine (`chess pgn`)
+and python-chess replay the PGN. Tried on ChessReD test game 0 with scripted answers: 102 of 102 plies, 1 correction.
+How to photograph and where to put the files: `docs/PHOTO_GUIDE.md`. The done bar (10 own games, ≤ 2 corrections
+each, demo video) is open until those photos exist. Known weak spot to watch on our board: when detection fails,
+the grid usually lands exactly one square inside the real one (the refinement locks onto an inner line).
 
 ### Not in V1–V4
 Full-board recognition from a single photo (only as a baseline comparison in the report), the end-to-end ResNeXt,
@@ -107,6 +159,11 @@ that argument hold.
 | chesscog (MIT) | Reference for RANSAC corner detection if the Hough approach fails; no dependency. |
 | Morditux/ChessGuiNG (GPL-2) | Not used: recognises screen diagrams, not photos; 2 months old, one author. |
 | GUI | None built. Cute Chess + UCI (pass 3) for the engine; python-chess SVG / lichess URL for visual checks. |
+
+**Changed 2026-11-19:** a GUI is being built after all (`chess_app/`, PySide6). The vision side stays a command-line
+program; the GUI runs `run_game.py --json game.json` as a subprocess and reads the result: the PGN plus the
+position after every ply (`chessvision/export.py`, format in docs/GUI_INTEGRATION.md). Checked on ChessReD game 0:
+102 plies, final FEN equal to the referee's after replaying the moves.
 
 ## Open points to settle with the team
 - Dataset storage: ChessReD is ~10,800 photos; keep it outside the repo (`~/Datasets/ChessReD`), path via env var `CHESSRED_DIR`.
