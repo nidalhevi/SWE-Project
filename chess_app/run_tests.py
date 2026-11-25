@@ -31,7 +31,7 @@ GUI_MODULES = (
     'tests_stage8.test_image_qt',
 )
 INTEGRATION_CORE = ('tests.test_roundtrip_integration', 'tests.test_runner')
-INTEGRATION_GUI = ('tests.test_cross_feature_gui', 'tests.test_process_failures')
+INTEGRATION_GUI = ('tests.test_cross_feature_gui', 'tests.test_process_failures', 'tests.test_notation')
 
 
 def selected_modules(*, core=False, integration_only=False):
