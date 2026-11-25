@@ -1,0 +1,33 @@
+[
+  {
+    "image": "generated_start.png",
+    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR",
+    "white_bottom": true
+  },
+  {
+    "image": "generated_middle.png",
+    "fen": "r2q1rk1/ppp2ppp/2nbpn2/3p4/3P1B2/2N1PN2/PPP2PPP/R2QKB1R",
+    "white_bottom": true
+  },
+  {
+    "image": "generated_end_flipped.png",
+    "fen": "6k1/1p3p2/7p/p3r3/P2R4/7P/2N2PP1/2R4K",
+    "white_bottom": false
+  },
+  {
+    "image": "generated_promotions.png",
+    "fen": "Q6k/2q5/3N4/4n3/8/8/8/K7",
+    "white_bottom": true
+  },
+  {
+    "image": "generated_with_panels.png",
+    "fen": "6k1/1p3p2/7p/p3r3/P2R4/7P/2N2PP1/2R4K",
+    "white_bottom": true,
+    "rect": [
+      105,
+      80,
+      512,
+      512
+    ]
+  }
+]

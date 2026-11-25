@@ -8,13 +8,17 @@ No classifier is fabricated when the optional backend is absent.
 import argparse
 from contextlib import redirect_stdout
 import importlib
+import inspect
 import json
 from pathlib import Path
 import re
 import sys
+from recognition_request import validate_request
+from image_recognition_setup import find_recognition_root
 
 
 def recognize(request):
+    validate_request(request)
     result = {'version': 1, 'request_id': request['request_id']}
     path = Path(request['path'])
     if not path.is_file():
@@ -26,6 +30,8 @@ def recognize(request):
     if not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*', backend):
         raise ValueError('Recognizer must have the form module:function')
     vision_path = request.get('vision_path')
+    if not vision_path and backend.startswith('lichess_2d.'):
+        vision_path = find_recognition_root()
     if vision_path:
         directory = Path(vision_path).resolve()
         if not directory.is_dir():
@@ -34,7 +40,18 @@ def recognize(request):
     module, function = backend.split(':')
     with redirect_stdout(sys.stderr):
         predict = getattr(importlib.import_module(module), function)
-        predictions = predict(str(path.resolve()), white_bottom=request['white_bottom'])
+        options = dict(white_bottom=request['white_bottom'])
+        for key in ('profile_path', 'board_rect'):
+            if request.get(key) is not None:
+                options[key] = request[key]
+        # Legacy backends keep their old signature when no options are supplied.
+        # Unsupported supplied options are rejected, never silently discarded.
+        try:
+            inspect.signature(predict).bind(str(path.resolve()), **options)
+        except (TypeError, ValueError) as error:
+            raise ValueError('The configured recognizer does not support the supplied profile/rectangle options: '
+                             + str(error)) from error
+        predictions = predict(str(path.resolve()), **options)
     if not isinstance(predictions, dict):
         raise ValueError('Recognizer must return a pieces/confidence mapping')
     # Backend cannot replace the worker's version, request ID, or status.

@@ -232,15 +232,38 @@ class ImportAndAnalysisTests(WindowCase):
     def test_close_waits_for_referee_engine_and_recognition_process(self):
         fixture = Path(__file__).resolve().parents[1] / 'tests_stage7/fake_uci.py'
         self.window._start_engine(sys.executable, [str(fixture)])
-        stage4.wait_until(lambda: self.window.analysis._expected_id is not None)
+        stage4.wait_until(
+            lambda: self.window.analysis._expected_id is not None
+        )
+
         with tempfile.TemporaryDirectory() as directory:
+            self.window._image_recognizer = 'fixture_recognizer:slow'
+            self.window._vision_path = FIXTURES
             self.window._open_image_path(image_file(directory))
+
             dialog = self.window._image_dialog
-            dialog.backend, dialog.vision_path = 'fixture_recognizer:slow', FIXTURES
             dialog.orientation.setCurrentIndex(1)
             dialog.recognize_button.click()
+            self.assertIsNotNone(dialog._worker)
+
+            recognition_closed = []
+            dialog._worker.closed.connect(
+                lambda: recognition_closed.append(True)
+            )
+
             self.window.close()
-            stage4.wait_until(lambda: not self.window.isVisible())
+
+            stage4.wait_until(
+                lambda: (
+                    bool(recognition_closed)
+                    and self.window._referee_stopped
+                    and self.window._engine_stopped
+                    and self.window._image_dialog is None
+                    and not self.window.isVisible()
+                ),
+                timeout=20,
+            )
+
         self.assertTrue(self.window._referee_stopped)
         self.assertTrue(self.window._engine_stopped)
         self.assertIsNone(self.window._image_dialog)

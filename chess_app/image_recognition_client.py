@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 from image_import import MAX_RESPONSE_BYTES, ImageImportError, parse_recognition
+from recognition_request import build_request
 
 
 class RecognitionClient(QObject):
@@ -30,13 +31,15 @@ class RecognitionClient(QObject):
         self._errors = bytearray()
         self._request_id = None
 
-    def start(self, image_path, *, request_id, white_bottom=True, backend=None, vision_path=None):
+    def start(self, image_path, *, request_id, white_bottom=True, backend=None, vision_path=None,
+              profile_path=None, board_rect=None):
         if self._started:
             raise RuntimeError('Use a new recognition client for each request')
+        request = build_request(image_path, request_id=request_id, white_bottom=white_bottom,
+                                backend=backend, vision_path=vision_path,
+                                profile_path=profile_path, board_rect=board_rect)
         self._started = True
         self._request_id = request_id
-        request = dict(path=str(image_path), request_id=request_id, white_bottom=white_bottom,
-                       backend=backend, vision_path=vision_path)
         worker = str(Path(__file__).with_name('image_recognition_worker.py'))
         self.process.setProgram(sys.executable)
         self.process.setArguments([worker, '--request', json.dumps(request, ensure_ascii=True)])
@@ -96,12 +99,15 @@ class RecognitionClient(QObject):
                 self.failed.emit(detail or f'Recognizer exited with code {code}')
             else:
                 try:
-                    result = parse_recognition(bytes(self._output), self._request_id)
-                except ImageImportError as error:
+                    result = self._parse_response(bytes(self._output))
+                except (ImageImportError, ValueError) as error:
                     self.failed.emit(str(error))
                 else:
                     self.completed.emit(result)
         self._emit_closed()
+
+    def _parse_response(self, raw):
+        return parse_recognition(raw, self._request_id)
 
     def _emit_closed(self):
         if not self._closed:

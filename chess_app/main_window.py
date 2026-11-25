@@ -15,7 +15,7 @@ from analysis_controller import AnalysisController
 from engine_protocol import format_score
 from pgn_service import PgnError, parse_pgn_text, read_pgn_file, write_pgn_file
 from image_import import ImageImportError
-from image_import_dialog import ImageImportDialog
+from image_recognition_setup import create_image_import_dialog as ImageImportDialog
 
 
 class MainWindow(QMainWindow):

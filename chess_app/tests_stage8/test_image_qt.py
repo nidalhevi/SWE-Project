@@ -246,10 +246,14 @@ class ImageGuiTests(unittest.TestCase):
         self.assertEqual(self.controller.position.fen, STARTING_FEN)
 
     def test_close_window_during_recognition(self):
+        self.window._image_recognizer = 'fixture_recognizer:slow'
+        self.window._vision_path = FIXTURES
+
         dialog = self.open_dialog()
-        dialog.backend, dialog.vision_path = 'fixture_recognizer:slow', FIXTURES
         dialog.orientation.setCurrentIndex(1)
         dialog.recognize_button.click()
+        self.assertIsNotNone(dialog._worker)
+
         self.window.close()
         stage4.wait_until(lambda: not self.window.isVisible())
         self.assertIsNone(self.window._image_dialog)
