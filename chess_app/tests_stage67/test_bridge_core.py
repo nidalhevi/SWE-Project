@@ -20,7 +20,7 @@ if RECOGNITION is None:
 sys.path.insert(0, str(RECOGNITION))
 from lichess_2d.notation import parse_placement
 from lichess_2d.theme_profiles import START, approve_profile, create_profile
-from recognition_2d.fixtures import MIDDLE, render
+from tests_lichess2d.fixtures import MIDDLE, render
 
 
 def run_worker(path, *, profile=None, rectangle=None, backend='lichess_2d.adapter_2d:recognize', vision=None):
