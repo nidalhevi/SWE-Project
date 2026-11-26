@@ -63,12 +63,25 @@ class NotationServiceTests(unittest.TestCase):
         self.assertEqual(promotion.sans, ('a8=Q',))
 
     def test_requests_before_ready_are_kept_and_the_newest_wins(self):
-        self.service.request(STARTING_FEN, moves('e2e4'))     # not started yet: ignored silently
-        self.boot()
+        # Before startup, requests remain queued and newer ones replace them.
+        self.service.request(STARTING_FEN, moves('e2e4'))
         self.service.request(STARTING_FEN, moves('d2d4'))
-        self.service.request(STARTING_FEN, moves('g1f3'))     # replaces d2d4 before it ran
-        stage4.wait_until(lambda: any(l.ucis == ('g1f3',) for l in self.lines))
-        self.assertEqual([l.ucis for l in self.lines], [('g1f3',)])
+        self.service.request(STARTING_FEN, moves('g1f3'))
+
+        self.assertEqual(self.lines, [])
+
+        # Start only after the newest request has been queued.
+        self.boot()
+
+        stage4.wait_until(
+            lambda: any(line.ucis == ('g1f3',) for line in self.lines)
+        )
+
+        self.assertEqual(
+            [line.ucis for line in self.lines],
+            [('g1f3',)],
+        )
+        self.assertEqual(self.lines[0].sans, ('Nf3',))
 
     def test_cached_line_answers_at_once(self):
         self.boot()
