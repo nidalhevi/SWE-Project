@@ -10,7 +10,8 @@ from image_import import parse_recognition
 from tests_lichess2d.fixtures import END, render
 from lichess_2d.notation import parse_placement
 
-APP = Path(__file__).resolve().parents[1]
+RECOGNITION_ROOT = Path(__file__).resolve().parents[1]
+APP = RECOGNITION_ROOT.parent / "chess_app"
 
 
 class WorkerIntegrationTests(unittest.TestCase):
@@ -18,8 +19,13 @@ class WorkerIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'flipped ü board.png'
             render(END, white_bottom=False).save(path)
-            request = dict(path=str(path), request_id=71, white_bottom=False,
-                           backend='lichess_2d.adapter:recognize')
+            request = dict(
+                path=str(path),
+                request_id=71,
+                white_bottom=False,
+                backend="lichess_2d.adapter:recognize",
+                vision_path=str(RECOGNITION_ROOT),
+            )
             result = subprocess.run([sys.executable, str(APP / 'image_recognition_worker.py'),
                                      '--request', json.dumps(request)], capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))

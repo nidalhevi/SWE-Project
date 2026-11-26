@@ -5,7 +5,7 @@ import hashlib
 import json
 from PIL import Image, ImageDraw
 from .support import FIXTURES
-from recognition_2d.fixtures import render, START, MIDDLE, END, PROMOTIONS
+from tests_lichess2d.fixtures import render, START, MIDDLE, END, PROMOTIONS
 
 
 def build():

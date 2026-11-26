@@ -15,8 +15,8 @@ from lichess_2d.board_proposals import BoardProposal, parse_proposals, proposal_
 from lichess_2d.recognizer_2d import Recognizer2D
 from lichess_2d.theme_profiles import create_profile, approve_profile
 from lichess_2d.notation import parse_placement
-from recognition_2d.fixtures import render, MIDDLE
-from tools.check_harder_inputs_2d import evaluate_stress, transform
+from tests_lichess2d.fixtures import render, MIDDLE
+from check_harder_inputs_2d import evaluate_stress, transform
 
 
 class HardeningTests(unittest.TestCase):

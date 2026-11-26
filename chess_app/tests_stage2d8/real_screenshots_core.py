@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import unittest
 from .support import ROOT
-from tools.evaluate_2d import evaluate, load_dataset
+from evaluate_2d import evaluate, load_dataset
 
 
 class RealScreenshotMilestoneTests(unittest.TestCase):

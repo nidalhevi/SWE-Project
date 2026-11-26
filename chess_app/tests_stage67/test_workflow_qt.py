@@ -27,7 +27,7 @@ from lichess_2d.board_locator_2d import BoardRect
 from lichess_2d.workflow_dialog import ImageImportDialog2D
 from lichess_2d.notation import parse_placement
 from lichess_2d.profile_preferences import save_selection
-from recognition_2d.fixtures import MIDDLE, render
+from tests_lichess2d.fixtures import MIDDLE, render
 
 
 def wait_until(predicate, timeout=15):
