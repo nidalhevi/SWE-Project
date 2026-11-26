@@ -13,6 +13,7 @@ from referee_client import RefereeClient
 from engine_client import EngineClient
 from analysis_controller import AnalysisController
 from engine_protocol import format_score
+from notation import NotationService, format_line
 from pgn_service import PgnError, parse_pgn_text, read_pgn_file, write_pgn_file
 from image_import import ImageImportError
 from image_recognition_setup import create_image_import_dialog as ImageImportDialog
@@ -29,6 +30,9 @@ class MainWindow(QMainWindow):
         self._initial = initial or PositionSnapshot(STARTING_FEN)
         self._closing = False
         self._referee_stopped = False
+        self._notation_stopped = False
+        self._shown_analysis = None  # (fen, ucis) of the line on display, waiting for its SAN
+        self._last_analysis = None
         self._promotion_dialog = None
         self.engine = None
         self.analysis = None
@@ -101,7 +105,7 @@ class MainWindow(QMainWindow):
             side_layout.addWidget(label)
         self.pv_view = QPlainTextEdit()
         self.pv_view.setReadOnly(True)
-        self.pv_view.setPlaceholderText('Suggested continuation in UCI notation (e2e4, g1f3, …)')
+        self.pv_view.setPlaceholderText('Suggested continuation (for example 1. e4 e5 2. Nf3)')
         self.pv_view.setMaximumHeight(85)
         side_layout.addWidget(self.pv_view)
         self.engine_status = QLabel('Load a Stockfish executable to enable analysis.')
@@ -145,6 +149,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.error_label)
 
         self.referee = RefereeClient(self, timeout_ms=10000)
+        # A second referee process only for notation: converting an engine line plays its
+        # moves, which must never happen in the referee that holds the game.
+        self.notation = NotationService(self)
+        self.notation.line_ready.connect(self._show_notation)
+        self.notation.unavailable.connect(self._notation_unavailable)
+        self.notation.closed.connect(self._on_notation_closed)
         self.controller = ChessController(self.referee, self)
         self.board.square_clicked.connect(self.controller.on_square_clicked)
         self.controller.position_changed.connect(self.board.set_position)
@@ -182,6 +192,7 @@ class MainWindow(QMainWindow):
     def _start(self):
         if not self._closing:
             self.controller.start(self._program, self._arguments, self._initial)
+            self.notation.start(self._program, self._arguments)
             if self._engine_program is not None:
                 self._start_engine(self._engine_program, self._engine_arguments)
 
@@ -241,15 +252,50 @@ class MainWindow(QMainWindow):
             self.analysis.set_movetime(milliseconds)
 
     def _show_analysis(self, result):
+        self._last_analysis = result
         self.evaluation_label.setText('Evaluation: ' + format_score(result))
         self.depth_label.setText(f'Depth: {result.depth}' if result else 'Depth: —')
-        best = result.best_move if result else None
-        if best:
-            promotion = '=' + best.promotion.upper() if best.promotion else ''
-            self.best_move_label.setText(f'Best move: {best.from_square} → {best.to_square}{promotion}')
-        else:
+        line = ()
+        if result:
+            line = result.principal_variation or ((result.best_move,) if result.best_move else ())
+        if not line:
+            self._shown_analysis = None
             self.best_move_label.setText('Best move: —')
-        self.pv_view.setPlainText(' '.join(move.uci for move in result.principal_variation) if result else '')
+            self.pv_view.setPlainText('')
+            return
+        fen = result.position.fen
+        if not self.notation.available:
+            self._shown_analysis = None
+            self._show_coordinates(result, line)
+            return
+        previous = self._shown_analysis
+        self._shown_analysis = (fen, tuple(move.uci for move in line))
+        if previous is None or previous[0] != fen:
+            # New position: do not leave the old position's moves on screen meanwhile.
+            self.best_move_label.setText('Best move: …')
+            self.pv_view.setPlainText('')
+        self.notation.request(fen, line)  # answered by _show_notation, at once if cached
+
+    def _show_notation(self, line):
+        if self._shown_analysis is None or self._shown_analysis[0] != line.fen:
+            return
+        if line.ucis != self._shown_analysis[1][:len(line.ucis)]:
+            return  # an older line of this position; the newer one is on its way
+        best = line.sans[0] if line.sans else line.ucis[0]
+        self.best_move_label.setText('Best move: ' + best)
+        self.pv_view.setPlainText(format_line(line.fen, line.sans, line.ucis))
+
+    def _show_coordinates(self, result, line):
+        """Fallback when the notation helper is not running: the engine's own coordinates."""
+        best = result.best_move or line[0]
+        promotion = '=' + best.promotion.upper() if best.promotion else ''
+        self.best_move_label.setText(f'Best move: {best.from_square} → {best.to_square}{promotion}')
+        self.pv_view.setPlainText(' '.join(move.uci for move in line))
+
+    def _notation_unavailable(self):
+        self._shown_analysis = None
+        if self._last_analysis is not None:
+            self._show_analysis(self._last_analysis)
 
     def _render_tree(self):
         tree = self.controller.tree
@@ -391,7 +437,7 @@ class MainWindow(QMainWindow):
         if dialog is not None:
             dialog.deleteLater()
         self._update_controls()
-        if self._closing and self._referee_stopped and self._engine_stopped:
+        if self._closing and self._helpers_stopped():
             QTimer.singleShot(0, self.close)
 
     def _choose_game(self, games):
@@ -516,8 +562,11 @@ class MainWindow(QMainWindow):
         self.error_label.setText(message)
         self.error_label.show()
 
+    def _helpers_stopped(self):
+        return self._referee_stopped and self._engine_stopped and self._notation_stopped
+
     def closeEvent(self, event):
-        if self._referee_stopped and self._engine_stopped and self._image_dialog is None:
+        if self._helpers_stopped() and self._image_dialog is None:
             event.accept()
             return
         event.ignore()
@@ -530,16 +579,22 @@ class MainWindow(QMainWindow):
             self.analysis.dispose()
         if self.engine is not None:
             self.engine.close()
+        self.notation.close()
         self.controller.close()
         if self._promotion_dialog is not None:
             self._promotion_dialog.reject()
 
     def _on_referee_closed(self):
         self._referee_stopped = True
-        if self._closing and self._engine_stopped and self._image_dialog is None:
+        if self._closing and self._helpers_stopped() and self._image_dialog is None:
             QTimer.singleShot(0, self.close)
 
     def _on_engine_closed(self):
         self._engine_stopped = True
-        if self._closing and self._referee_stopped and self._image_dialog is None:
+        if self._closing and self._helpers_stopped() and self._image_dialog is None:
+            QTimer.singleShot(0, self.close)
+
+    def _on_notation_closed(self):
+        self._notation_stopped = True
+        if self._closing and self._helpers_stopped() and self._image_dialog is None:
             QTimer.singleShot(0, self.close)

@@ -147,6 +147,7 @@ class ChessController(QObject):
             self._refresh()
         elif action == 'san':
             annotated_move = replace(context, san=result)
+            self.status_changed.emit(f'Playing {result}…')
             self._send('play_move', lambda: self.referee.play_move(annotated_move), annotated_move)
         elif action == 'play_move':
             try:
@@ -256,7 +257,7 @@ class ChessController(QObject):
             return
         self.clear_selection()
         self._set_phase('moving')
-        self.status_changed.emit(f'Playing {move.uci}…')
+        self.status_changed.emit('Playing…')  # the SAN is not known until the referee answers
         # SAN must be requested BEFORE the move changes the referee's position.
         self._send('san', lambda: self.referee.san(move), move)
 

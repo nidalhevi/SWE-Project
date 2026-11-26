@@ -92,8 +92,9 @@ class AnalysisGuiTests(unittest.TestCase):
         self.complete()
         self.assertEqual(self.window.evaluation_label.text(), 'Evaluation: +0.34')
         self.assertEqual(self.window.depth_label.text(), 'Depth: 8')
-        self.assertIn('e2', self.window.best_move_label.text())
-        self.assertIn('e2e4', self.window.pv_view.toPlainText())
+        # Standard notation, converted by the window's notation referee (arrives just after).
+        stage4.wait_until(lambda: self.window.best_move_label.text() == 'Best move: e4')
+        stage4.wait_until(lambda: self.window.pv_view.toPlainText() == '1. e4 e5')
 
     def test_black_perspective_and_board_flip(self):
         self.start_analysis(); self.complete()
@@ -101,7 +102,7 @@ class AnalysisGuiTests(unittest.TestCase):
         self.assertEqual(self.window.evaluation_label.text(), 'Evaluation: -0.34')
         self.window.board.flip()
         self.assertEqual(self.window.evaluation_label.text(), 'Evaluation: -0.34')
-        self.assertIn('e7e5', self.window.pv_view.toPlainText())
+        stage4.wait_until(lambda: self.window.pv_view.toPlainText() == '1... e5 2. Nf3')
 
     def test_old_request_and_wrong_fen_cannot_overwrite(self):
         self.start_analysis(); self.complete()
@@ -156,3 +157,4 @@ class AnalysisGuiTests(unittest.TestCase):
         stage4.wait_until(lambda: not self.window.isVisible())
         self.assertTrue(self.window._referee_stopped)
         self.assertTrue(self.window._engine_stopped)
+        self.assertTrue(self.window._notation_stopped)
