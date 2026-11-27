@@ -20,7 +20,7 @@ Stockfish provides advice. Users enter moves for both sides; the GUI does not au
 
 The first screenshot shows the main window, titled **Chess Analysis — Stockfish**. The large board occupies the left side, with game navigation and analysis on the right. File controls and chapter navigation sit above them; general board controls and status messages sit below.
 
-
+![image](Screenshot_1.png)
 
 The window can be resized. Drag the divider between the board and sidebar to adjust their relative widths. The board scales to the available space. Colours around window controls can vary with the operating system; the board itself uses green and cream squares.
 
@@ -120,6 +120,8 @@ Some controls are temporarily disabled during loading, replay, validation, or pr
 ## 3. Import image dialog
 
 The second screenshot shows **Import image — recognize and review position**. The source image appears on the left; an editable interpretation appears on the right. This workflow imports one position, not the moves that led to it.
+
+![image](Screenshot_2.png)
 
 ### 3.1 Select the recognition theme and board
 
