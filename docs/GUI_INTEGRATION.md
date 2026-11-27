@@ -7,6 +7,19 @@ the contract from the other two sides, plus review notes. Order agreed by the te
 2. The GUI analyses the shown position with Stockfish.
 3. Playing moves on the board, then playing against our own engine.
 
+**Status 2026-11-27: all three steps are in `main`.** The window, controller, game tree, PGN service and
+engine client are Nidal's (`nidal/chess-gui`), the notation service is Giulia's. What this file describes below
+is the contract as first written; where the final code differs:
+
+- A photo game is not shown from its own list of positions any more. `photo_game.pgn_text` turns the reader's
+  JSON record into PGN text and the window loads it with `controller.import_game`, the same path as "Open PGN".
+  So every move of a photo game is checked once more by the referee, and the game can be continued, branched,
+  analysed and saved like any other. A move the reader worked out from the next photo carries the PGN comment
+  `{unclear photo}`.
+- Step 3's "play against our own engine" is not built: analysis uses Stockfish over UCI.
+- The first GUI game tree and move input written on `main` (2026-11-23) were dropped in favour of Nidal's;
+  see HURDLES.md, 2026-11-25.
+
 ## The three programs the GUI talks to
 
 | Program | Started as | Protocol | Client in `chess_app/` |

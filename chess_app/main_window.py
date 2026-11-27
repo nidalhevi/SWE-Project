@@ -15,6 +15,8 @@ from analysis_controller import AnalysisController
 from engine_protocol import format_score
 from notation import NotationService, format_line
 from pgn_service import PgnError, parse_pgn_text, read_pgn_file, write_pgn_file
+from photo_game import pgn_text
+from photo_importer import PhotoImporter
 from image_import import ImageImportError
 from image_recognition_setup import create_image_import_dialog as ImageImportDialog
 
@@ -43,6 +45,7 @@ class MainWindow(QMainWindow):
         self._vision_path = vision_path
         self._image_dialog = None
         self._image_pending = False
+        self._photo_pending = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -55,8 +58,12 @@ class MainWindow(QMainWindow):
         self.paste_pgn_button = QPushButton('Paste PGN')
         self.save_pgn_button = QPushButton('Save PGN')
         self.import_image_button = QPushButton('Import image')
+        self.photo_game_button = QPushButton('Open photo game')
         self.save_pgn_button.setToolTip('Save the current game and all its variations as one PGN game.')
-        for button in (self.open_pgn_button, self.paste_pgn_button, self.save_pgn_button, self.import_image_button):
+        self.import_image_button.setToolTip('One picture of a board: the position on it.')
+        self.photo_game_button.setToolTip('A folder with one photo of a real board per move: the whole game.')
+        for button in (self.open_pgn_button, self.paste_pgn_button, self.save_pgn_button,
+                       self.import_image_button, self.photo_game_button):
             imports.addWidget(button)
         imports.addStretch()
         layout.addLayout(imports)
@@ -156,6 +163,11 @@ class MainWindow(QMainWindow):
         self.notation.unavailable.connect(self._notation_unavailable)
         self.notation.closed.connect(self._on_notation_closed)
         self.controller = ChessController(self.referee, self)
+        # The photo reader (PyTorch, OpenCV) runs as its own process; see photo_importer.py.
+        self.photos = PhotoImporter(self)
+        self.photos.progress.connect(self._photo_progress)
+        self.photos.finished.connect(self._photo_game_ready)
+        self.photos.failed.connect(self._photo_game_failed)
         self.board.square_clicked.connect(self.controller.on_square_clicked)
         self.controller.position_changed.connect(self.board.set_position)
         self.controller.selection_changed.connect(self.board.set_selection)
@@ -170,6 +182,9 @@ class MainWindow(QMainWindow):
         self.controller.import_succeeded.connect(self._clear_import_error)
         self.controller.import_failed.connect(self._image_import_failed)
         self.controller.import_succeeded.connect(self._image_import_succeeded)
+        self.controller.import_failed.connect(self._photo_import_done)
+        self.controller.import_succeeded.connect(self._photo_import_done)
+        self.photo_game_button.clicked.connect(self._open_photo_game)
         self.open_pgn_button.clicked.connect(self._open_pgn)
         self.paste_pgn_button.clicked.connect(self._paste_pgn)
         self.save_pgn_button.clicked.connect(self._save_pgn)
@@ -211,6 +226,7 @@ class MainWindow(QMainWindow):
         self.paste_pgn_button.setEnabled(self.controller.can_load)
         self.save_pgn_button.setEnabled(self.controller.can_load)
         self.import_image_button.setEnabled(self.controller.can_load and self._image_dialog is None)
+        self.photo_game_button.setEnabled(not self._closing and not self.photos.busy)
 
     def _choose_engine(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Choose Stockfish executable', '', 'All files (*)')
@@ -307,12 +323,19 @@ class MainWindow(QMainWindow):
             self.moves_tree.clear()
             self._node_items.clear()
             for node in tree.iter_nodes():
-                parent = self.moves_tree if node.parent_id is None else self._node_items[node.parent_id]
                 label = tree.label(node.node_id)
-                if node.parent_id is not None:
+                if node.parent_id is None:
+                    parent = self.moves_tree
+                else:
+                    # A line is a flat list: its next move goes beside the move before it. Only an
+                    # alternative is indented, under the move it replaces. Nesting every move under
+                    # the previous one pushed a 60-move game sixty levels to the right.
                     siblings = tree.node(node.parent_id).children
                     if siblings.index(node.node_id) > 0:
                         label += ' (variation)'
+                        parent = self._node_items[siblings[0]]
+                    else:
+                        parent = self._node_items[node.parent_id].parent() or self.moves_tree
                 item = QTreeWidgetItem(parent, [label])
                 item.setData(0, Qt.ItemDataRole.UserRole, node.node_id)
                 annotation = tree.annotations(node.node_id)
@@ -377,8 +400,51 @@ class MainWindow(QMainWindow):
         self.error_label.hide()
 
     def _show_import_error(self, message):
-        self.error_label.setText(('Image: ' if self._image_pending else 'PGN: ') + message)
+        source = 'Image: ' if self._image_pending else 'Photos: ' if self._photo_pending else 'PGN: '
+        self.error_label.setText(source + message)
         self.error_label.show()
+
+    def _open_photo_game(self):
+        if self.photos.busy or self._closing:
+            return
+        folder = QFileDialog.getExistingDirectory(self, 'Folder with one photo per move')
+        if folder:
+            self._open_photo_folder(folder)
+
+    def _open_photo_folder(self, folder):
+        self._clear_import_error()
+        self.photos.start(folder)
+        self._update_controls()
+        self.status_label.setText('Photos: starting the reader…')
+
+    def _photo_progress(self, line):
+        self.status_label.setText('Photos: ' + line)
+
+    def _photo_game_failed(self, message):
+        self._update_controls()
+        self.error_label.setText('Photos: ' + message)
+        self.error_label.show()
+
+    def _photo_game_ready(self, game):
+        """The reader finished: load its game through the same path as a PGN file."""
+        self._update_controls()
+        if self._closing:
+            return
+        if not self.controller.can_load:   # a move is being played right now: try again shortly
+            QTimer.singleShot(100, lambda: self._photo_game_ready(game))
+            return
+        try:
+            parsed = parse_pgn_text(pgn_text(game))[0]
+        except PgnError as error:
+            self._photo_game_failed(str(error))
+            return
+        if self._confirm_new_tree():
+            self._clear_import_error()
+            self._photo_pending = True
+            self.controller.import_game(parsed)
+
+    def _photo_import_done(self, *_):
+        self._photo_pending = False
 
     def _open_image(self):
         if not self.controller.can_load or self._image_dialog is not None or self._closing:
@@ -575,6 +641,7 @@ class MainWindow(QMainWindow):
         self._closing = True
         if self._image_dialog is not None:
             self._image_dialog.force_close()
+        self.photos.cancel()
         if self.analysis is not None:
             self.analysis.dispose()
         if self.engine is not None:

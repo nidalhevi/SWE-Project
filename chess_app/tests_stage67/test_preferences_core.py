@@ -19,7 +19,7 @@ class PreferenceTests(unittest.TestCase):
 
     def test_selection_roundtrip_builtin_and_path(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()  # macOS: /var is a link to /private/var
             settings = base / 'settings/image_import.json'
             profile = base / 'profiles/theme ü/profile.json'
             save_selection(str(profile), settings)
@@ -32,8 +32,9 @@ class PreferenceTests(unittest.TestCase):
 
     def test_missing_profile_path_is_not_replaced_with_builtin(self):
         with tempfile.TemporaryDirectory() as directory:
-            settings = Path(directory) / 'preferences.json'
-            missing = Path(directory) / 'gone/profile.json'
+            base = Path(directory).resolve()
+            settings = base / 'preferences.json'
+            missing = base / 'gone/profile.json'
             save_selection(str(missing), settings)
             self.assertEqual(load_selection(settings), str(missing))
             self.assertNotEqual(load_selection(settings), BUILTIN)
@@ -48,7 +49,7 @@ class PreferenceTests(unittest.TestCase):
     def test_both_separate_folder_layouts_are_discovered_without_env(self):
         for nested in (False, True):
             with self.subTest(nested=nested), tempfile.TemporaryDirectory() as directory:
-                project = Path(directory)
+                project = Path(directory).resolve()
                 app = project / 'chess_app'
                 app.mkdir()
                 root = project / '2d_recognition'

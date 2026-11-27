@@ -9,9 +9,11 @@ Format: docs/GUI_INTEGRATION.md.
 import json
 from dataclasses import dataclass
 
-from models import Move, PositionSnapshot
+from models import Move, PositionSnapshot, STARTING_FEN
 
 SUPPORTED_VERSION = 1
+UNCLEAR = "unclear photo"   # PGN comment on a move that was worked out from the next photo
+RESULTS = ("1-0", "0-1", "1/2-1/2", "*")
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,38 @@ class PhotoGame:
         if not 0 <= index <= len(self.plies):
             raise IndexError("No such ply in this game.")
         return self.start if index == 0 else self.plies[index - 1].position
+
+
+def pgn_text(game: PhotoGame) -> str:
+    """The game as PGN text, so the window can load it like any other PGN.
+
+    A move that was worked out from the next photo carries the comment
+    {unclear photo}. Move numbers come from the positions, so a game that
+    does not start from the initial position is numbered correctly.
+    Postcondition: one PGN game; its last token is the result.
+    """
+    words = game.pgn.split()
+    result = words[-1] if words and words[-1] in RESULTS else "*"
+    unclear = sum(ply.recovered for ply in game.plies)
+    headers = [("Event", "Photo game"), ("Result", result)]
+    if game.start.fen != STARTING_FEN:
+        headers += [("SetUp", "1"), ("FEN", game.start.fen)]
+    summary = f"Read from photos: {len(game.plies)} moves"
+    if unclear:
+        summary += f", {unclear} marked '{UNCLEAR}' (worked out from the next photo)"
+    tokens = ["{" + summary + "}"]
+    numbered = True     # Black's move needs its number at the start and after a comment
+    for index, ply in enumerate(game.plies):
+        fields = game.position_at(index).fen.split()
+        if fields[1] == "w":
+            tokens.append(f"{fields[5]}. {ply.move.san}")
+        else:
+            tokens.append(f"{fields[5]}... {ply.move.san}" if numbered else ply.move.san)
+        numbered = ply.recovered
+        if ply.recovered:
+            tokens.append("{" + UNCLEAR + "}")
+    lines = [f'[{name} "{value}"]' for name, value in headers]
+    return "\n".join(lines) + "\n\n" + " ".join(tokens + [result]) + "\n"
 
 
 def game_from_record(record: dict) -> PhotoGame:

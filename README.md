@@ -9,7 +9,7 @@ It has three parts, each a separate program:
 |---|---|---|---|
 | **Referee and engine** | `src/` | C17, no libraries | Knows the rules of chess exactly, and can also choose moves |
 | **Vision** | `vision/` | Python | Finds the board in a photo, reads the pieces, asks the referee which legal move fits |
-| **GUI** | `chess_app/` | Python (PySide6) | Shows the board; will load photo games and run analysis |
+| **GUI** | `chess_app/` | Python (PySide6) | Board to play on, game tree with variations, PGN, photo games, Stockfish analysis |
 
 ```
  photos ──► vision ──────────► game.pgn + game.json ──► GUI board ──► Stockfish analysis
@@ -21,7 +21,7 @@ It has three parts, each a separate program:
 exactly one legal move was played, and the referee can list them all (about 30). So the vision side never has
 to read the board perfectly: it only has to tell which of those 30 candidates fits the photo best.
 
-## Status (2026-11-23)
+## Status (2026-11-27)
 
 | Piece | State | Evidence |
 |---|---|---|
@@ -29,13 +29,17 @@ to read the board perfectly: it only has to tell which of those 30 candidates fi
 | Terminal play, batch protocol | Done | `chess play`, `chess batch` |
 | Engine: search, evaluation, UCI | Done | scores 54% against Stockfish limited to 1900 (40 games, 0.1 s/move) |
 | Performance ladder | Done | perft 47 → 133 million nodes/s on one thread, 1,211 on 15 threads; see `docs/perf.md` |
-| Vision: board detection, square classifier, move decoder | Done | on unseen ChessReD games: 99.0% of squares, 98.0% of moves, 3 of 3 games exact |
-| Photos → PGN tool, correction prompt | Tooling done | tested on ChessReD; **not yet tested on our own board and photos** |
-| GUI: board display, referee client | Started | board draws; playing moves on it is not wired yet |
-| GUI: photo game on the board | Done | "Open photo game…" reads a folder of photos and steps through the moves; checked on a 103-photo ChessReD game |
-| GUI: Stockfish analysis | Next | contract in `docs/GUI_INTEGRATION.md` |
+| Vision: board detection, square classifier, move decoder | Done | on unseen ChessReD photos: board corners within 2% on 306 of 306, 99.0% of squares; 6 of 6 games (630 moves) exact |
+| Photos → PGN tool, correction prompt | Done | our own board, set and phone: 59 photos → 58 moves, none flagged, every move legal; **one game so far, and not yet compared with a hand-written record** |
+| GUI: play moves, promotion, game tree with variations | Done | every move goes through the referee; `chess_app/run_tests.py` |
+| GUI: open, paste and save PGN (variations, comments) | Done | same test runner |
+| GUI: photo game on the board | Done | "Open photo game" reads a folder of photos into the game tree; our 59 photos take 23 s |
+| GUI: Stockfish analysis | Done | score, depth, best move and line in standard notation, for whichever position is shown |
+| GUI: position from one screenshot of a 2D board | Done for the lichess-style piece set | "Import image"; see `README_2d_recognition.md` |
 
-Known gaps: `perf stat` measurements on Linux, HEIC photos outside macOS, no CI for `chess_app/`.
+Known gaps: only one game of our own photographed; "Import image" does not read a photo of a real board by
+default (the photo classifier is only reliable together with the move decoder, i.e. for whole games); `perf stat`
+measurements on Linux; HEIC photos outside macOS.
 
 ## Quick start
 
@@ -71,22 +75,25 @@ Add `--ask` to be asked whenever a photo is doubtful.
 **GUI.**
 
 ```bash
-pip install -r chess_app/requirements.txt
-cd chess_app && python main.py
+pip install -r chess_app/requirements.txt -r 2d_recognition/requirements-lichess2d.txt
+cd chess_app && python main.py --stockfish /path/to/stockfish
 ```
 
-"Open photo game…" asks for a folder of photos and shows the game on the board, with a move list to step
-through. It runs the photo reader as a separate program. If the vision packages (torch, OpenCV) are installed
-in a different Python than PySide6, say which one:
+Without `--stockfish` the window still works and "Load Stockfish" picks the program later. Click a piece, then
+a highlighted square, to move. Playing a different move from an earlier position adds a variation.
+
+"Open photo game" asks for a folder of photos and loads the game into the move list. It runs the photo reader
+as a separate program. If the vision packages (torch, OpenCV) are installed in a different Python than PySide6,
+say which one:
 
 ```bash
-cd chess_app && CHESSVISION_PYTHON=/usr/bin/python3 python main.py
+cd chess_app && CHESSVISION_PYTHON=/usr/bin/python3 python main.py --stockfish /opt/homebrew/bin/stockfish
 ```
 
-Check that the GUI can talk to the referee (12 checks):
+GUI tests (needs `make release` first; also run in CI):
 
 ```bash
-cd chess_app && python check_referee.py --bin ../build/release/chess
+python chess_app/run_tests.py
 ```
 
 ## Photo games: folder, file names, how to open one
@@ -113,11 +120,12 @@ from 40 to 60 degrees above the table. A photo of the starting position before m
 second photo of the same position (both are read as "no move"). Do not skip a move.
 Details: `docs/PHOTO_GUIDE.md`.
 
-**Open it in the GUI.** Start the GUI (see Quick start), click **Open photo game…** and choose the game's
-folder (the folder itself, not a photo). The status line shows progress, about 0.2 s per photo. When it
-finishes, the board shows the last position; click a move in the list or use ◀ ▶ to step through the game.
-A `?` after a move means that photo was unclear and deserves a second look. **Save PGN…** writes the game to
-a file; nothing is saved otherwise, and the photos are never copied or changed.
+**Open it in the GUI.** Start the GUI (see Quick start), click **Open photo game** and choose the game's
+folder (the folder itself, not a photo). The status line shows progress, about 0.4 s per photo. When it
+finishes, the game is in the move list: click a move or use First / Previous / Next / Last to step through it,
+and Stockfish analyses whichever position is shown. A move with the comment "unclear photo" was worked out from
+the next photo and deserves a second look. **Save PGN** writes the game to a file; nothing is saved otherwise,
+and the photos are never copied or changed.
 
 **Or from the terminal:**
 
@@ -182,7 +190,8 @@ tests/          C unit tests and the perft reference suite (perft_suite.epd is n
 fuzz/           libFuzzer harnesses for the FEN and PGN parsers
 tools/          differential test against python-chess, match runner, perft benchmark, magic generator
 vision/         chessvision package, scripts (train / evaluate / run_game), tests, trained weights
-chess_app/      the GUI
+chess_app/      the GUI: window, controller, game tree, PGN, referee / engine / photo-reader clients, tests
+2d_recognition/ position from a screenshot of a 2D board (used by "Import image"); README_2d_recognition.md
 docs/           VISION_SPEC, GUI_INTEGRATION, PHOTO_GUIDE, perf, FUZZING
 SPEC.md         what each pass of the engine must do, and what is done
 HURDLES.md      dated log of every bug and surprise, append only
@@ -203,4 +212,5 @@ CLAUDE.md       conventions for working in this repo with Claude Code
   in this repo; see "No photos of your own?" above for the download.
 - Stockfish is used as an opponent for measuring strength and as the GUI's analysis engine. It is a separate
   GPL-3 program that you install yourself; it is not bundled.
-- Libraries: python-chess (tests only), NumPy, OpenCV, PyTorch, PySide6.
+- The 2D recognition fixtures use the Cburnett chess piece images (see the `ATTRIBUTION.md` files next to them).
+- Libraries: python-chess (tests only), NumPy, OpenCV, PyTorch, PySide6, Pillow.

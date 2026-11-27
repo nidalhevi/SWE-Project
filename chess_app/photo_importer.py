@@ -68,9 +68,11 @@ class PhotoImporter(QObject):
         ])
 
     def cancel(self) -> None:
+        """Stop reading; nothing is reported. Waits briefly so the process is gone before Qt deletes it."""
         if self.busy:
             self._reported = True
             self._process.kill()
+            self._process.waitForFinished(2000)
 
     def _read_progress(self) -> None:
         text = bytes(self._process.readAllStandardError()).decode("utf-8", errors="replace")
