@@ -14,13 +14,26 @@ from typing import Callable, Iterable, List, Optional, Sequence
 
 import numpy as np
 
-from .decoder import Candidate, confidence, decode_move
+from .decoder import (TYPE_WEIGHT, Candidate, apply_changes, colour_first, colour_fit, confidence,
+                      decode_move, label_fit)
 from .engine import START_FEN, EngineClient
+from .labels import placement_from_fen
 
-# A photo is unreadable if even the best move explains it worse than this mean log-likelihood per
-# square. Good photos score around -0.1; a board found one square off scores below -0.6, and can
-# still show a confident-looking gap between two wrong moves, so the gap alone is not enough.
-MIN_FIT = -0.4
+# When is a photo unreadable (typically: the grid was found off the board)? The gap between the
+# two best moves is not enough: two wrong moves can differ confidently by chance. Two tests on
+# how well the best move explains the photo, both calibrated 2026-11-25 on five ChessReD games
+# and our own first game, each with every photo also shifted one square in four directions:
+#   MIN_FIT   the colours (empty / white / black per square, decoder.colour_fit) must fit at
+#             least this well. Well-read photos: about -0.04 on ChessReD, -0.06 to -0.25 on our
+#             board; shifted grids: -1.5 typically.
+#   MAX_DROP  the exact labels (decoder.label_fit) must not fit much worse than in the photos
+#             accepted so far in this game (median of the last FIT_WINDOW). Shifted grids drop
+#             by about 2; the largest drop of a good photo was 0.42 on ChessReD, 0.13 on ours.
+# Until 2026-11-25 the rule was "label fit above -0.4", an absolute level that only ChessReD's
+# piece set reaches: on our own set it marked all 59 photos unreadable.
+MIN_FIT = -0.35
+MAX_DROP = 0.3
+FIT_WINDOW = 15
 
 HOLD = "hold"        # an AskFn may answer this: do not play, decode this photo with the next one
 NO_MOVE = "no-move"  # or this: the photo shows the position unchanged
@@ -97,21 +110,33 @@ class GameDecoder:
     """
 
     def __init__(self, engine: EngineClient, threshold: float = 2.0, ask: Optional[AskFn] = None,
-                 min_fit: float = MIN_FIT):
+                 min_fit: float = MIN_FIT, type_weight: float = TYPE_WEIGHT):
         self.engine, self.threshold, self.ask, self.min_fit = engine, threshold, ask, min_fit
+        self.type_weight = type_weight
         self.res = GameResult()
-        self.held: Optional[np.ndarray] = None
+        self.held: Optional[np.ndarray] = None   # a held photo, already colour-first weighted
+        self._fits: List[float] = []             # label fit of the photos accepted so far
 
     def feed(self, obs: np.ndarray) -> List[Ply]:
-        """Plies played because of this observation: none (no move, or held), one, or two."""
+        """Plies played because of this observation: none (no move, or held), one, or two.
+
+        Precondition: obs is the classifier's (64, 13) output, a1 first. Moves are ranked on
+        its colour-first weighting (decoder.colour_first); whether the photo is readable at all
+        is judged by MIN_FIT and MAX_DROP above.
+        """
         if self.engine.status() != "ongoing":
             return []
+        raw, obs = obs, colour_first(obs, self.type_weight)
         if self.held is not None:
             return self._feed_after_held(obs)
         fen = self.engine.fen()
         cands = decode_move(fen, obs, self.engine.moves())
         conf, best = confidence(cands), cands[0].uci
-        if conf < self.threshold or cands[0].score / 64 < self.min_fit:
+        after = apply_changes(placement_from_fen(fen), cands[0].changes)
+        fit = label_fit(raw, after)
+        if conf >= self.threshold and colour_fit(raw, after) >= self.min_fit and not self._dropped(fit):
+            self._fits.append(fit)
+        else:
             if self.ask is None:
                 self.held = obs
                 return []
@@ -122,6 +147,10 @@ class GameDecoder:
             if chosen is not None:
                 return self._play([None if chosen == NO_MOVE else chosen], conf, asked=True)
         return self._play([best], conf)
+
+    def _dropped(self, fit: float) -> bool:
+        """True if `fit` is far below what this game's accepted photos reached (no opinion on the first)."""
+        return bool(self._fits) and fit < float(np.median(self._fits[-FIT_WINDOW:])) - MAX_DROP
 
     def _feed_after_held(self, obs: np.ndarray) -> List[Ply]:
         held, self.held = self.held, None

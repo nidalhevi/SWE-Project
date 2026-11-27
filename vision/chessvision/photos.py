@@ -13,6 +13,7 @@ import numpy as np
 
 from .board import find_corners, grid_of_square, warp_for_crops
 from .classifier import SquareClassifier, best_orientation
+from .decoder import colour_first
 from .engine import START_FEN, EngineClient
 from .labels import placement_from_fen
 from .pipeline import AskFn, GameDecoder, GameResult
@@ -29,8 +30,8 @@ def observe(image: np.ndarray, classifier: SquareClassifier, orientation: Orient
     if corners is None:
         raise ValueError("no board found in the photo")
     grid = classifier.grid_probs(warp_for_crops(image, corners))
-    if orientation == "auto":
-        orientation, _ = best_orientation(grid, placement_from_fen(fen))
+    if orientation == "auto":   # judged colour first, like the moves: see decoder.colour_first
+        orientation, _ = best_orientation(colour_first(grid), placement_from_fen(fen))
     return grid[grid_of_square(int(orientation))]
 
 

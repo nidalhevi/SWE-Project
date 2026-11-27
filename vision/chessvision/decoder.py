@@ -93,6 +93,60 @@ def decode_move(prev_fen: str, probs: np.ndarray, legal_moves: Sequence[str],
     return out
 
 
+# How much the piece *type* counts next to the piece *colour* when ranking moves: 1 = the
+# classifier's probabilities as they are, 0 = only empty / white / black. On a piece set the
+# classifier was not trained on, the type is right for under half the pieces while the colour
+# is right for 97% (measured 2026-11-25), and colour is nearly always enough to tell legal
+# moves apart. 0.5 gave the widest safety margin on our own game and costs little on ChessReD.
+TYPE_WEIGHT = 0.5
+
+
+def _colour_parts(probs: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Probability of empty, of a white piece and of a black piece per square, each (64, 1)."""
+    probs = np.asarray(probs, dtype=np.float64)
+    return probs[:, :1], probs[:, WP:BP].sum(1, keepdims=True), probs[:, BP:].sum(1, keepdims=True)
+
+
+def colour_first(probs: np.ndarray, type_weight: float = TYPE_WEIGHT) -> np.ndarray:
+    """Re-weight an observation so the colour of a square counts fully and the piece type less.
+
+    P(label) = P(colour) * P(type | colour); the second factor is raised to `type_weight`.
+    Precondition: probs is (64, 13) with rows summing to about 1; 0 <= type_weight <= 1.
+    Postcondition: (64, 13), same ranking of labels within a colour; rows no longer sum to 1,
+    which decode_move does not need. type_weight 1 returns the input unchanged.
+    """
+    empty, white, black = _colour_parts(probs)
+    probs = np.asarray(probs, dtype=np.float64)
+    colour = np.concatenate([empty] + [white] * 6 + [black] * 6, axis=1)
+    kind = np.concatenate([np.ones_like(empty), probs[:, WP:BP] / np.clip(white, 1e-9, None),
+                           probs[:, BP:] / np.clip(black, 1e-9, None)], axis=1)
+    return colour * np.clip(kind, LOG_FLOOR, None) ** type_weight
+
+
+def colour_fit(probs: np.ndarray, board: Sequence[int]) -> float:
+    """Mean log-probability per square that `board` has the right colours: 0 is a perfect fit.
+
+    Only empty / white piece / black piece is compared, so the number means the same on any
+    piece set: about -0.04 on a well-read photo, below -0.4 when the grid is off the board.
+    Precondition: probs is (64, 13), board has 64 labels, both a1 first.
+    """
+    empty, white, black = _colour_parts(probs)
+    labels = np.asarray(board)
+    seen = np.where(labels == EMPTY, empty[:, 0], np.where(labels < BP, white[:, 0], black[:, 0]))
+    return float(np.log(np.clip(seen, LOG_FLOOR, None)).mean())
+
+
+def label_fit(probs: np.ndarray, board: Sequence[int]) -> float:
+    """Mean log-probability per square of the exact labels of `board` (colour and piece type).
+
+    Its level depends on the piece set (about -0.05 on ChessReD, -1.1 on a set the classifier
+    does not know), so it is only meaningful next to other photos of the same game.
+    Precondition: as colour_fit.
+    """
+    probs = np.asarray(probs, dtype=np.float64)
+    return float(np.log(np.clip(probs[np.arange(64), np.asarray(board)], LOG_FLOOR, None)).mean())
+
+
 def confidence(cands: Sequence[Candidate]) -> float:
     """Log-likelihood gap between the best and second-best candidate (0 if only one)."""
     if len(cands) < 2:

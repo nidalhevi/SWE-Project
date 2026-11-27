@@ -1,7 +1,8 @@
 """Board geometry (pass V2): photo -> 4 board corners -> top-down warp -> 64 square crops.
 
-`find_corners` uses the learned regressor (corner_net.py) when its weights are present and
-falls back to the classical detector below otherwise. Both end with `refine_corners`.
+`find_corners` asks two finders and keeps the more board-like answer: the pattern finder
+(xcorners.py, needs no training) and the learned regressor (corner_net.py). The classical
+Hough detector below is the last resort when neither answers.
 
 The classical detector has three stages:
   1. edges + Hough lines, split into two orientation families (the board's two line directions);
@@ -389,25 +390,47 @@ def _line_positions(lines: List[Tuple[float, int]], m: float, s8: float, band: f
 _PREDICTOR = None
 
 
+def _find_learned(image: np.ndarray) -> Corners:
+    """The corner net's answer after warp refinement. Raises ImportError or FileNotFoundError
+    when torch or the weights are missing. A regressor has no reject: it always answers."""
+    global _PREDICTOR
+    if _PREDICTOR is None:
+        from .corner_net import CornerPredictor  # torch is optional at import time
+        _PREDICTOR = CornerPredictor()
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return refine_by_warp(gray, _PREDICTOR(image))
+
+
 def find_corners(image: np.ndarray, method: str = "auto") -> Optional[Corners]:
     """Board corners TL, TR, BR, BL in image pixels, or None.
 
-    method: "auto" = learned regressor if its weights exist, else classical;
-            "learned" or "classical" force one. The learned path always returns corners
-            (a regressor has no reject), so callers judge plausibility downstream.
+    method "auto": the pattern finder (xcorners.py) and the learned regressor both answer, and
+    the quadrilateral that looks more like a chessboard (_checker_score) is returned; the
+    pattern finder wins a tie. The two fail on different photos: the net on boards it was not
+    trained on, the pattern finder when too few square corners are visible. Without torch or
+    weights only the pattern finder runs, and the classical detector is the last resort.
+    "pattern", "learned" or "classical" force one finder ("learned" raises if it is unavailable).
+    Precondition: image is BGR or grayscale.
     """
-    global _PREDICTOR
-    if method in ("auto", "learned"):
-        try:
-            if _PREDICTOR is None:
-                from .corner_net import CornerPredictor  # torch is optional at import time
-                _PREDICTOR = CornerPredictor()
-            gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            return refine_by_warp(gray, _PREDICTOR(image))
-        except (ImportError, FileNotFoundError):
-            if method == "learned":
-                raise
-    return find_corners_classical(image)
+    if method not in ("auto", "pattern", "learned", "classical"):
+        raise ValueError("unknown corner method: %r" % (method,))
+    if method == "classical":
+        return find_corners_classical(image)
+    if method == "learned":
+        return _find_learned(image)
+    from .xcorners import find_corners_pattern  # imported here: xcorners imports this module
+    pattern = find_corners_pattern(image)
+    if method == "pattern":
+        return pattern
+    try:
+        learned = _find_learned(image)
+    except (ImportError, FileNotFoundError):
+        learned = None
+    if pattern is None or learned is None:
+        found = pattern if pattern is not None else learned
+        return found if found is not None else find_corners_classical(image)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return pattern if _checker_score(gray, pattern) >= _checker_score(gray, learned) else learned
 
 
 # ---------------------------------------------------------------- crops for the square classifier (pass V3)
