@@ -1,10 +1,10 @@
 """Arrange PGN controls, move tree, board, and referee lifecycle."""
 from pathlib import Path
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QSignalBlocker, QTimer, Qt
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QInputDialog, QLabel, QMainWindow,
     QMessageBox, QPushButton, QVBoxLayout, QWidget, QSplitter,
-    QTreeWidget, QTreeWidgetItem, QFileDialog, QPlainTextEdit, QDialogButtonBox, QSpinBox,
+    QTreeWidget, QTreeWidgetItem, QFileDialog, QPlainTextEdit, QDialogButtonBox, QSpinBox, QComboBox,
 )
 from board_widget import BoardWidget
 from controller import ChessController
@@ -14,7 +14,7 @@ from engine_client import EngineClient
 from analysis_controller import AnalysisController
 from engine_protocol import format_score
 from notation import NotationService, format_line
-from pgn_service import PgnError, parse_pgn_text, read_pgn_file, write_pgn_file
+from pgn_service import PgnError, parse_pgn_text, read_pgn_file, write_pgn_file, write_pgn_text
 from photo_game import pgn_text
 from photo_importer import PhotoImporter
 from image_import import ImageImportError
@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self._image_dialog = None
         self._image_pending = False
         self._photo_pending = False
+        self._study_save_path = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -56,17 +57,31 @@ class MainWindow(QMainWindow):
         imports = QHBoxLayout()
         self.open_pgn_button = QPushButton('Open PGN')
         self.paste_pgn_button = QPushButton('Paste PGN')
-        self.save_pgn_button = QPushButton('Save PGN')
+        self.save_pgn_button = QPushButton('Save current chapter')
+        self.save_study_button = QPushButton('Save all chapters')
         self.import_image_button = QPushButton('Import image')
         self.photo_game_button = QPushButton('Open photo game')
         self.save_pgn_button.setToolTip('Save the current game and all its variations as one PGN game.')
         self.import_image_button.setToolTip('One picture of a board: the position on it.')
         self.photo_game_button.setToolTip('A folder with one photo of a real board per move: the whole game.')
-        for button in (self.open_pgn_button, self.paste_pgn_button, self.save_pgn_button,
+        for button in (self.open_pgn_button, self.paste_pgn_button, self.save_pgn_button, self.save_study_button,
                        self.import_image_button, self.photo_game_button):
             imports.addWidget(button)
         imports.addStretch()
         layout.addLayout(imports)
+        chapters = QHBoxLayout()
+        self.previous_chapter_button = QPushButton('Previous chapter')
+        self.chapter_selector = QComboBox()
+        self.chapter_selector.setObjectName('chapter_selector')
+        self.chapter_selector.setMinimumContentsLength(20)
+        self.chapter_selector.setToolTip('Choose a PGN chapter; each keeps its selected move and variations.')
+        self.next_chapter_button = QPushButton('Next chapter')
+        self.chapter_counter = QLabel('Chapter —')
+        chapters.addWidget(self.previous_chapter_button)
+        chapters.addWidget(self.chapter_selector, 1)
+        chapters.addWidget(self.next_chapter_button)
+        chapters.addWidget(self.chapter_counter)
+        layout.addLayout(chapters)
         self.board = BoardWidget()
         self.board.set_position(self._initial)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -175,6 +190,9 @@ class MainWindow(QMainWindow):
         self.controller.status_changed.connect(self.status_label.setText)
         self.controller.controls_changed.connect(self._update_controls)
         self.controller.tree_changed.connect(self._render_tree)
+        self.controller.study_changed.connect(self._render_chapters)
+        self.controller.study_export_ready.connect(self._study_export_ready)
+        self.controller.study_export_failed.connect(self._study_export_failed)
         self.controller.promotion_requested.connect(self._show_promotion)
         self.controller.problem.connect(self._show_problem)
         self.controller.closed.connect(self._on_referee_closed)
@@ -188,6 +206,10 @@ class MainWindow(QMainWindow):
         self.open_pgn_button.clicked.connect(self._open_pgn)
         self.paste_pgn_button.clicked.connect(self._paste_pgn)
         self.save_pgn_button.clicked.connect(self._save_pgn)
+        self.save_study_button.clicked.connect(self._save_study)
+        self.chapter_selector.activated.connect(self._chapter_selected)
+        self.previous_chapter_button.clicked.connect(self._previous_chapter)
+        self.next_chapter_button.clicked.connect(self._next_chapter)
         self.import_image_button.clicked.connect(self._open_image)
         self.flip_button.clicked.connect(self.board.flip)
         self.clear_button.clicked.connect(self.controller.clear_selection)
@@ -225,6 +247,17 @@ class MainWindow(QMainWindow):
         self.open_pgn_button.setEnabled(self.controller.can_load)
         self.paste_pgn_button.setEnabled(self.controller.can_load)
         self.save_pgn_button.setEnabled(self.controller.can_load)
+        self.save_study_button.setEnabled(self.controller.can_load and self._study_save_path is None)
+        self.chapter_selector.setEnabled(self.controller.can_load)
+        self.previous_chapter_button.setEnabled(self.controller.can_previous_chapter)
+        self.next_chapter_button.setEnabled(self.controller.can_next_chapter)
+        study = self.controller.study
+        if study is not None:
+            with QSignalBlocker(self.chapter_selector):
+                self.chapter_selector.setCurrentIndex(study.active_index)
+        if not self.controller.can_load:
+            # Both Stockfish and the SAN helper may still deliver old replies.
+            self._show_analysis(None)
         self.import_image_button.setEnabled(self.controller.can_load and self._image_dialog is None)
         self.photo_game_button.setEnabled(not self._closing and not self.photos.busy)
 
@@ -363,13 +396,43 @@ class MainWindow(QMainWindow):
         if item is not None and self.controller.can_load:
             self.controller.go_to(item.data(0, Qt.ItemDataRole.UserRole))
 
+    def _render_chapters(self):
+        study = self.controller.study
+        with QSignalBlocker(self.chapter_selector):
+            self.chapter_selector.clear()
+            if study is not None:
+                for index, chapter in enumerate(study.chapters):
+                    self.chapter_selector.addItem(f'{index + 1}. {chapter.title}', chapter.chapter_id)
+                    self.chapter_selector.setItemData(index, chapter.error or chapter.title, Qt.ItemDataRole.ToolTipRole)
+                self.chapter_selector.setCurrentIndex(study.active_index)
+        self.chapter_counter.setText(
+            f'Chapter {study.active_index + 1} of {len(study.chapters)}' if study else 'Chapter —')
+        self._update_controls()
+
+    def _chapter_selected(self, index):
+        if self.controller.can_load and not self._closing:
+            self._clear_import_error()
+            self.controller.select_chapter(self.chapter_selector.itemData(index))
+
+    def _previous_chapter(self):
+        if self.controller.can_previous_chapter:
+            self._clear_import_error()
+            self.controller.previous_chapter()
+
+    def _next_chapter(self):
+        if self.controller.can_next_chapter:
+            self._clear_import_error()
+            self.controller.next_chapter()
+
     def _confirm_new_tree(self):
         tree = self.controller.tree
-        if tree is None or len(tree) == 1:
+        multiple_chapters = self.controller.study is not None and len(self.controller.study.chapters) > 1
+        if tree is None or (len(tree) == 1 and not multiple_chapters):
             return True
         answer = QMessageBox.question(
-            self, 'Replace current game?',
-            'This will replace the current game and all its variations. Continue?',
+            self, 'Replace current study?' if multiple_chapters else 'Replace current game?',
+            (f'This will replace all {len(self.controller.study.chapters)} chapters and their variations. Continue?'
+             if multiple_chapters else 'This will replace the current game and all its variations. Continue?'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -506,20 +569,10 @@ class MainWindow(QMainWindow):
         if self._closing and self._helpers_stopped():
             QTimer.singleShot(0, self.close)
 
-    def _choose_game(self, games):
-        if len(games) == 1:
-            return games[0]
-        labels = [f'{index + 1}. {game.description}' for index, game in enumerate(games)]
-        selected, accepted = QInputDialog.getItem(
-            self, 'Select PGN game', 'The input contains multiple games:', labels, 0, False,
-        )
-        return games[labels.index(selected)] if accepted else None
-
-    def _import_games(self, games):
-        chosen = self._choose_game(games)
-        if chosen is not None and self._confirm_new_tree():
+    def _import_games(self, games, *, source_path=None):
+        if self.controller.can_load and self._confirm_new_tree():
             self._clear_import_error()
-            self.controller.import_game(chosen)
+            self.controller.open_study(games, source_path=source_path)
 
     def _open_pgn(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Open PGN', '', 'PGN files (*.pgn);;All files (*)')
@@ -538,7 +591,7 @@ class MainWindow(QMainWindow):
                 if answer != QMessageBox.StandardButton.Yes:
                     return
                 games = read_pgn_file(path, encoding='latin-1')
-            self._import_games(games)
+            self._import_games(games, source_path=str(path))
         except (PgnError, OSError) as error:
             self._show_import_error(str(error))
 
@@ -564,7 +617,7 @@ class MainWindow(QMainWindow):
         dialog.deleteLater()
 
     def _save_pgn(self):
-        path, _ = QFileDialog.getSaveFileName(self, 'Save PGN', 'analysis.pgn', 'PGN files (*.pgn)')
+        path, _ = QFileDialog.getSaveFileName(self, 'Save current chapter', 'analysis.pgn', 'PGN files (*.pgn)')
         if not path:
             return
         if not path.lower().endswith('.pgn'):
@@ -580,7 +633,7 @@ class MainWindow(QMainWindow):
         try:
             write_pgn_file(path, self.controller.tree)
             self._clear_import_error()
-            self.status_label.setText('Saved PGN with all variations')
+            self.status_label.setText('Saved current chapter with all variations')
         except (PgnError, OSError) as error:
             self._show_import_error(str(error))
 
@@ -621,6 +674,42 @@ class MainWindow(QMainWindow):
         self._promotion_dialog = dialog
         dialog.open()
 
+    def _save_study(self):
+        if not self.controller.can_load or self._study_save_path is not None or self._closing:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, 'Save all PGN chapters', 'study.pgn', 'PGN files (*.pgn)')
+        if not path:
+            return
+        if not path.lower().endswith('.pgn'):
+            path += '.pgn'
+            if Path(path).exists():
+                answer = QMessageBox.question(self, 'Replace PGN file?', f'{path} already exists. Replace it?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+        self._study_save_path = path
+        if not self.controller.export_all_chapters():
+            self._study_save_path = None
+        self._update_controls()
+
+    def _study_export_ready(self, text):
+        path, self._study_save_path = self._study_save_path, None
+        if path is None or self._closing:
+            return
+        try:
+            write_pgn_text(path, text)
+            self._clear_import_error()
+            self.status_label.setText(f'Saved all {len(self.controller.study.chapters)} chapters')
+        except (PgnError, OSError) as error:
+            self._show_import_error(str(error))
+        self._update_controls()
+
+    def _study_export_failed(self, message):
+        self._study_save_path = None
+        if not self._closing:
+            self._show_import_error('Could not save all chapters: ' + message)
+            self._update_controls()
+
     def _show_problem(self, message):
         if self._promotion_dialog is not None:
             self._promotion_dialog.reject()
@@ -639,6 +728,7 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._closing = True
+        self._study_save_path = None
         if self._image_dialog is not None:
             self._image_dialog.force_close()
         self.photos.cancel()

@@ -410,12 +410,28 @@ def export_pgn(tree: GameTree) -> str:
 
 
 
+def export_study(trees):
+    """Export every validated chapter, preserving their order and variations."""
+    trees = tuple(trees)
+    if not trees or any(tree is None for tree in trees):
+        raise PgnError('Validate every chapter before saving the complete study')
+    return '\n\n'.join(export_pgn(tree).rstrip() for tree in trees) + '\n'
+
+
 def write_pgn_file(path, tree):
     """Serialize first, then atomically replace the selected destination file."""
+    write_pgn_text(path, export_pgn(tree))
+
+
+def write_study_file(path, trees):
+    write_pgn_text(path, export_study(trees))
+
+
+def write_pgn_text(path, text):
+    """Atomically write an already serialized game or multi-game document."""
     import os
     import tempfile
     destination = Path(path)
-    text = export_pgn(tree)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n',

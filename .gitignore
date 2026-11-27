@@ -22,3 +22,5 @@ venv/
 2d_recognition/extraction-demo/
 2d_recognition/settings/image_import.json
 2d_recognition/reports/local/
+
+.chapter-backups/

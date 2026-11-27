@@ -10,7 +10,8 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QTimer, Signal
 from models import Move, PositionSnapshot, STARTING_FEN
 from game_tree import GameTree
-from pgn_service import PgnError, parse_pgn_text, validate_game
+from pgn_service import PgnError, export_study, parse_pgn_text, validate_game
+from study import Study
 
 
 class ChessController(QObject):
@@ -25,6 +26,9 @@ class ChessController(QObject):
     tree_changed = Signal()
     import_failed = Signal(str)
     import_succeeded = Signal()
+    study_changed = Signal()
+    study_export_ready = Signal(str)
+    study_export_failed = Signal(str)
 
     def __init__(self, referee, parent=None):
         super().__init__(parent)
@@ -36,6 +40,14 @@ class ChessController(QObject):
         self.legal_moves = ()
         self.last_move = None
         self.tree = None
+        self.study = None
+        self._chapter_target = None  # (candidate Study, index); commit after validation/replay
+        self._replay_tree = None
+        self._replay_purpose = None
+        self._export_flow = None
+        self._export_trees = None
+        self._export_problem = None
+        self._export_notification = None
         self._replay_target = None
         self._replay_path = deque()
         self._promotion_moves = ()
@@ -71,6 +83,15 @@ class ChessController(QObject):
         # Compatibility with stage 4: Undo now navigates back, preserving moves.
         return self.can_previous
 
+    @property
+    def can_previous_chapter(self):
+        return self.can_load and self.study is not None and self.study.active_index > 0
+
+    @property
+    def can_next_chapter(self):
+        return (self.can_load and self.study is not None
+                and self.study.active_index + 1 < len(self.study.chapters))
+
     def start(self, program, arguments=None, initial=None):
         self._initial = initial or PositionSnapshot(STARTING_FEN)
         self.status_changed.emit('Starting referee…')
@@ -85,7 +106,9 @@ class ChessController(QObject):
         try:
             request_id = submit()
         except (RuntimeError, ValueError) as error:
-            if self._import_flow is not None:
+            if self._export_flow is not None:
+                self._abort_export(str(error))
+            elif self._import_flow is not None or self._chapter_target is not None:
                 self._abort_import(str(error))
             else:
                 self._on_fatal(str(error))
@@ -128,15 +151,18 @@ class ChessController(QObject):
         if isinstance(context, tuple) and context[0] == 'pgn_import':
             self._advance_import(result)
             return
+        if isinstance(context, tuple) and context[0] == 'study_export':
+            self._advance_export(result)
+            return
 
         # Navigation is a transaction: don't publish intermediate replay boards.
         if context == 'replay_root':
-            if result.fen != self.tree.root.position.fen:
+            if result.fen != self._replay_tree.root.position.fen:
                 self._on_fatal('Referee returned a different starting FEN during replay')
                 return
             self._replay_next()
         elif isinstance(context, tuple) and context[0] == 'replay_move':
-            node = self.tree.node(context[1])
+            node = self._replay_tree.node(context[1])
             if result.fen != node.position.fen:
                 self._on_fatal('Referee replay disagreed with a stored position')
                 return
@@ -175,6 +201,13 @@ class ChessController(QObject):
                 message = self._notice + ' — ' + message
                 self._notice = ''
             self.status_changed.emit(message)
+            notification, self._export_notification = self._export_notification, None
+            if notification is not None:
+                kind, value = notification
+                if kind == 'ready':
+                    self.study_export_ready.emit(value)
+                else:
+                    self.study_export_failed.emit(value)
 
     def _position_status(self):
         turn = self.position.turn_name
@@ -262,6 +295,11 @@ class ChessController(QObject):
         self._send('san', lambda: self.referee.san(move), move)
 
     def _publish_current(self):
+        # Startup, New game and accepted FEN loads become one-chapter documents.
+        # Moves/navigation keep the same Chapter and GameTree objects.
+        if self.study is None or self.study.active.tree is not self.tree:
+            self.study = Study.from_tree(self.tree)
+            self.study_changed.emit()
         self.position = self.tree.current.position
         self.last_move = self.tree.current.move
         self.clear_selection()
@@ -279,7 +317,12 @@ class ChessController(QObject):
             return
         if node_id == self.tree.current.node_id and not force:
             return
-        path = self.tree.path_to(node_id)
+        self._begin_replay(self.tree, node_id)
+
+    def _begin_replay(self, tree, node_id, *, purpose=None):
+        path = tree.path_to(node_id)
+        self._replay_tree = tree
+        self._replay_purpose = purpose
         self._replay_target = node_id
         self._replay_path = deque(path)
         self.clear_selection()
@@ -287,7 +330,7 @@ class ChessController(QObject):
         self._set_phase('replaying')
         self.status_changed.emit('Restoring selected position…')
         self._send('load_position',
-                   lambda: self.referee.load_position(self.tree.root.position),
+                   lambda: self.referee.load_position(tree.root.position),
                    'replay_root')
 
     def _replay_next(self):
@@ -296,8 +339,18 @@ class ChessController(QObject):
             self._send('play_move', lambda: self.referee.play_move(node.move),
                        ('replay_move', node.node_id))
         else:
-            self.tree.select(self._replay_target)
+            tree = self._replay_tree
+            purpose = self._replay_purpose
+            tree.select(self._replay_target)
             self._replay_target = None
+            self._replay_tree = None
+            self._replay_purpose = None
+            if purpose == 'chapter':
+                self._commit_chapter(tree)
+            else:
+                self.tree = tree
+            if purpose == 'export':
+                self._finish_export()
             self._publish_current()
             self._refresh()
 
@@ -337,21 +390,65 @@ class ChessController(QObject):
         return True
 
     def import_game(self, parsed_game, *, source='PGN'):
-        """Build and validate a temporary tree; publish only after full success."""
+        """Compatibility entry point: replace the document with one chapter."""
+        return self.open_study((parsed_game,), source=source)
+
+    def open_study(self, parsed_games, *, source_path=None, source='PGN'):
+        """Retain every PGN game; validate the first before replacing the document."""
         if not self.can_load:
-            return
+            return False
+        candidate = Study.from_games(parsed_games, source_path=source_path)
+        self._chapter_target = (candidate, 0)
+        self._start_chapter_import(candidate.chapters[0].parsed, source)
+        return True
+
+    def select_chapter(self, chapter_id):
+        if not self.can_load or self.study is None:
+            return False
+        try:
+            index = self.study.index_of(chapter_id)
+        except KeyError:
+            return False
+        if index == self.study.active_index:
+            return True
+        chapter = self.study.chapters[index]
+        self._chapter_target = (self.study, index)
+        if chapter.tree is None:
+            self._start_chapter_import(chapter.parsed, 'chapter')
+        else:
+            self._begin_replay(chapter.tree, chapter.tree.current.node_id, purpose='chapter')
+        return True
+
+    def previous_chapter(self):
+        if self.can_previous_chapter:
+            self.select_chapter(self.study.chapters[self.study.active_index - 1].chapter_id)
+
+    def next_chapter(self):
+        if self.can_next_chapter:
+            self.select_chapter(self.study.chapters[self.study.active_index + 1].chapter_id)
+
+    def _start_chapter_import(self, parsed_game, source):
         self._import_source = source
         self.clear_selection()
         self._set_phase('importing')
         self._import_flow = validate_game(parsed_game)
         self._advance_import()
 
+    def _commit_chapter(self, tree):
+        study, index = self._chapter_target
+        chapter = study.chapters[index]
+        chapter.tree, chapter.error = tree, None
+        study.active_index = index
+        self.study, self.tree = study, tree
+        self._chapter_target = None
+        self.study_changed.emit()
+
     def _advance_import(self, result=None):
         try:
             request = self._import_flow.send(result)
         except StopIteration as finished:
             self._import_flow = None
-            self.tree = finished.value
+            self._commit_chapter(finished.value)
             self._notice = ('Imported image position' if self._import_source == 'image'
                             else f'Imported {len(self.tree) - 1} moves and variations')
             self._publish_current()
@@ -372,6 +469,14 @@ class ChessController(QObject):
         if self._import_flow is not None:
             self._import_flow.close()
             self._import_flow = None
+        if self._chapter_target is not None:
+            study, index = self._chapter_target
+            study.chapters[index].error = message
+        self._chapter_target = None
+        self._replay_target = self._replay_tree = self._replay_purpose = None
+        self._replay_path.clear()
+        self._set_phase('importing')
+        self.study_changed.emit()
         label = 'Image' if self._import_source == 'image' else 'PGN'
         self._notice = f'{label} import failed; previous game restored'
         self.import_failed.emit(message)
@@ -383,6 +488,97 @@ class ChessController(QObject):
         if self.phase == 'importing':
             self.go_to(self.tree.current.node_id, force=True)
 
+    def export_all_chapters(self):
+        """Validate unopened games, restore active history, then emit complete PGN."""
+        if not self.can_load or self.study is None:
+            return False
+        if all(chapter.tree is not None for chapter in self.study.chapters):
+            try:
+                text = export_study(chapter.tree for chapter in self.study.chapters)
+            except (PgnError, ValueError, KeyError) as error:
+                self.study_export_failed.emit(str(error))
+            else:
+                self.study_export_ready.emit(text)
+            return True
+        self._export_problem = None
+        self.clear_selection()
+        self._set_phase('exporting')
+        self._export_flow = self._validate_unopened_chapters()
+        self._advance_export()
+        return True
+
+    def _validate_unopened_chapters(self):
+        trees = []
+        for index, chapter in enumerate(self.study.chapters):
+            if chapter.tree is not None:
+                trees.append(chapter.tree)
+                continue
+            flow = validate_game(chapter.parsed)
+            response = None
+            try:
+                while True:
+                    try:
+                        request = flow.send(response)
+                    except StopIteration as complete:
+                        trees.append(complete.value)
+                        break
+                    response = yield replace(request, description=
+                        f'Chapter {index + 1} ({chapter.title}): {request.description}')
+            except (PgnError, ValueError, KeyError) as error:
+                raise PgnError(f'Chapter {index + 1} ({chapter.title}): {error}') from error
+            finally:
+                flow.close()
+        return trees
+
+    def _advance_export(self, result=None):
+        try:
+            request = self._export_flow.send(result)
+        except StopIteration as complete:
+            self._export_flow = None
+            self._export_trees = complete.value
+            self._begin_replay(self.tree, self.tree.current.node_id, purpose='export')
+            return
+        except (PgnError, ValueError, KeyError) as error:
+            self._abort_export(str(error))
+            return
+        self.status_changed.emit(request.description)
+        if request.action in ('load_position', 'play_move', 'san'):
+            submit = lambda: getattr(self.referee, request.action)(request.payload)
+        else:
+            submit = getattr(self.referee, request.action)
+        self._send(request.action, submit, ('study_export', request.description))
+
+    def _abort_export(self, message):
+        if self._export_flow is not None:
+            self._export_flow.close()
+            self._export_flow = None
+        self._export_trees = None
+        self._export_problem = message
+        self._set_phase('exporting')
+        # A following fatal_error may prevent restoration; never retry a dead process.
+        QTimer.singleShot(0, self._restore_after_export)
+
+    def _restore_after_export(self):
+        if self.phase == 'exporting':
+            self._begin_replay(self.tree, self.tree.current.node_id, purpose='export')
+
+    def _finish_export(self):
+        problem = self._export_problem
+        try:
+            if problem is None:
+                text = export_study(self._export_trees)
+                for chapter, tree in zip(self.study.chapters, self._export_trees):
+                    chapter.tree, chapter.error = tree, None
+                self._export_notification = ('ready', text)
+                self.study_changed.emit()
+            else:
+                self._export_notification = ('failed', problem)
+        except (PgnError, ValueError, KeyError) as error:
+            self._export_notification = ('failed', str(error))
+        finally:
+            self._export_trees = None
+            self._export_problem = None
+
     def _on_failed(self, request_id, action, message):
         if self.phase in ('closing', 'closed', 'failed'):
             return
@@ -393,6 +589,12 @@ class ChessController(QObject):
         self.clear_selection()
         if isinstance(context, tuple) and context[0] == 'pgn_import':
             self._abort_import(context[1] + ': ' + message)
+            return
+        if isinstance(context, tuple) and context[0] == 'study_export':
+            self._abort_export(context[1] + ': ' + message)
+            return
+        if self._chapter_target is not None:
+            self._abort_import('Could not activate chapter: ' + message)
             return
         if self._replay_target is not None:
             # The referee may be partway through a restored line; never enable
@@ -418,6 +620,9 @@ class ChessController(QObject):
         if self.phase in ('closing', 'closed', 'failed'):
             return
         self._pending = None
+        exporting = (self._export_flow is not None or self._export_trees is not None
+                     or self._export_problem is not None or self._export_notification is not None)
+        self._cancel_study_work()
         if self._import_flow is not None:
             self._import_flow.close()
             self._import_flow = None
@@ -429,11 +634,14 @@ class ChessController(QObject):
         self._set_phase('failed')
         self.status_changed.emit('Referee error — close and restart the application')
         self.problem.emit(message)
+        if exporting:
+            self.study_export_failed.emit(message)
 
     def close(self):
         if self.phase in ('closing', 'closed'):
             return
         self._pending = None
+        self._cancel_study_work()
         if self._import_flow is not None:
             self._import_flow.close()
             self._import_flow = None
@@ -448,5 +656,13 @@ class ChessController(QObject):
     def _on_closed(self):
         # A fatal process may finish before the user closes the window.
         self._pending = None
+        self._cancel_study_work()
         self._set_phase('closed')
         self.closed.emit()
+
+    def _cancel_study_work(self):
+        if self._export_flow is not None:
+            self._export_flow.close()
+        self._export_flow = self._export_trees = self._export_notification = None
+        self._export_problem = None
+        self._chapter_target = self._replay_tree = self._replay_purpose = None
