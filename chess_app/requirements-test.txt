@@ -1,0 +1,5 @@
+# Use the GUI's existing PySide6 installation locally. This range is for CI.
+PySide6>=6.7,<7
+# The 2D recognition tests (tests/test_2d_*.py); same ranges as 2d_recognition/requirements-lichess2d.txt.
+numpy>=1.26,<3
+Pillow>=10.3,<13

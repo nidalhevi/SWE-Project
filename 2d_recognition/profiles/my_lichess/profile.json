@@ -1,0 +1,352 @@
+{
+  "version": 1,
+  "name": "My Lichess",
+  "reviewed": true,
+  "created_at": "2026-11-24T16:27:10.363176+00:00",
+  "preprocessing": {
+    "version": 1,
+    "board_size": 512,
+    "square_size": 64,
+    "background_tolerance": 18,
+    "core_erosion": 1,
+    "ignored_corners": 11,
+    "ignored_rim": 2,
+    "mask_method": "background-distance-conservative-core",
+    "color_mode": "RGB",
+    "template_sizes": [
+      62,
+      64,
+      66
+    ],
+    "shifts": [
+      -1,
+      0,
+      1
+    ],
+    "support_dilation": 2,
+    "foreground_weight": 0.65,
+    "outside_weight": 0.35,
+    "max_match_error": 0.105,
+    "min_match_margin": 0.018
+  },
+  "reference": {
+    "source_name": "Screenshot 2026-11-24 172617.png",
+    "white_bottom": true,
+    "source_size": [
+      2560,
+      1600
+    ],
+    "rectangle": {
+      "left": 751,
+      "top": 264,
+      "width": 1053,
+      "height": 1053
+    },
+    "original_square_size": [
+      131.625,
+      131.625
+    ]
+  },
+  "pieces": {
+    "P": {
+      "raw": "templates/wP_raw.png",
+      "support": "templates/wP_support.png",
+      "core": "templates/wP_core.png",
+      "rgba": "templates/wP.png",
+      "sample_square": "a2",
+      "examples": [
+        "a2",
+        "b2",
+        "c2",
+        "d2",
+        "e2",
+        "f2",
+        "g2",
+        "h2"
+      ],
+      "foreground_fraction": 0.2626953125
+    },
+    "N": {
+      "raw": "templates/wN_raw.png",
+      "support": "templates/wN_support.png",
+      "core": "templates/wN_core.png",
+      "rgba": "templates/wN.png",
+      "sample_square": "b1",
+      "examples": [
+        "b1",
+        "g1"
+      ],
+      "foreground_fraction": 0.400634765625
+    },
+    "B": {
+      "raw": "templates/wB_raw.png",
+      "support": "templates/wB_support.png",
+      "core": "templates/wB_core.png",
+      "rgba": "templates/wB.png",
+      "sample_square": "f1",
+      "examples": [
+        "c1",
+        "f1"
+      ],
+      "foreground_fraction": 0.280029296875
+    },
+    "R": {
+      "raw": "templates/wR_raw.png",
+      "support": "templates/wR_support.png",
+      "core": "templates/wR_core.png",
+      "rgba": "templates/wR.png",
+      "sample_square": "a1",
+      "examples": [
+        "a1",
+        "h1"
+      ],
+      "foreground_fraction": 0.353515625
+    },
+    "Q": {
+      "raw": "templates/wQ_raw.png",
+      "support": "templates/wQ_support.png",
+      "core": "templates/wQ_core.png",
+      "rgba": "templates/wQ.png",
+      "sample_square": "d1",
+      "examples": [
+        "d1"
+      ],
+      "foreground_fraction": 0.4189453125
+    },
+    "K": {
+      "raw": "templates/wK_raw.png",
+      "support": "templates/wK_support.png",
+      "core": "templates/wK_core.png",
+      "rgba": "templates/wK.png",
+      "sample_square": "e1",
+      "examples": [
+        "e1"
+      ],
+      "foreground_fraction": 0.3681640625
+    },
+    "p": {
+      "raw": "templates/bP_raw.png",
+      "support": "templates/bP_support.png",
+      "core": "templates/bP_core.png",
+      "rgba": "templates/bP.png",
+      "sample_square": "f7",
+      "examples": [
+        "a7",
+        "b7",
+        "c7",
+        "d7",
+        "e7",
+        "f7",
+        "g7",
+        "h7"
+      ],
+      "foreground_fraction": 0.2626953125
+    },
+    "n": {
+      "raw": "templates/bN_raw.png",
+      "support": "templates/bN_support.png",
+      "core": "templates/bN_core.png",
+      "rgba": "templates/bN.png",
+      "sample_square": "g8",
+      "examples": [
+        "b8",
+        "g8"
+      ],
+      "foreground_fraction": 0.402587890625
+    },
+    "b": {
+      "raw": "templates/bB_raw.png",
+      "support": "templates/bB_support.png",
+      "core": "templates/bB_core.png",
+      "rgba": "templates/bB.png",
+      "sample_square": "f8",
+      "examples": [
+        "c8",
+        "f8"
+      ],
+      "foreground_fraction": 0.284912109375
+    },
+    "r": {
+      "raw": "templates/bR_raw.png",
+      "support": "templates/bR_support.png",
+      "core": "templates/bR_core.png",
+      "rgba": "templates/bR.png",
+      "sample_square": "a8",
+      "examples": [
+        "a8",
+        "h8"
+      ],
+      "foreground_fraction": 0.362060546875
+    },
+    "q": {
+      "raw": "templates/bQ_raw.png",
+      "support": "templates/bQ_support.png",
+      "core": "templates/bQ_core.png",
+      "rgba": "templates/bQ.png",
+      "sample_square": "d8",
+      "examples": [
+        "d8"
+      ],
+      "foreground_fraction": 0.4267578125
+    },
+    "k": {
+      "raw": "templates/bK_raw.png",
+      "support": "templates/bK_support.png",
+      "core": "templates/bK_core.png",
+      "rgba": "templates/bK.png",
+      "sample_square": "e8",
+      "examples": [
+        "e8"
+      ],
+      "foreground_fraction": 0.375244140625
+    }
+  },
+  "backgrounds": {
+    "light": {
+      "color": [
+        240,
+        217,
+        181
+      ],
+      "image": "backgrounds/light.png",
+      "model_image": "backgrounds/light_model.png",
+      "sample_square": "a6",
+      "examples": [
+        "a6",
+        "c6",
+        "e6",
+        "g6",
+        "b5",
+        "d5",
+        "f5",
+        "h5",
+        "a4",
+        "c4",
+        "e4",
+        "g4",
+        "b3",
+        "d3",
+        "f3",
+        "h3"
+      ]
+    },
+    "dark": {
+      "color": [
+        181,
+        136,
+        99
+      ],
+      "image": "backgrounds/dark.png",
+      "model_image": "backgrounds/dark_model.png",
+      "sample_square": "b6",
+      "examples": [
+        "b6",
+        "d6",
+        "f6",
+        "h6",
+        "a5",
+        "c5",
+        "e5",
+        "g5",
+        "b4",
+        "d4",
+        "f4",
+        "h4",
+        "a3",
+        "c3",
+        "e3",
+        "g3"
+      ]
+    }
+  },
+  "artifacts": {
+    "backgrounds/dark.png": "532cb7e2c9b83222fa755271933875772cba7e7dfc9847c8d2472c79e41d8e2d",
+    "backgrounds/dark_model.png": "da8ce2af99e236f9d3d1143c3a6cf492a59de31403bcda86509c3bc5e55711d5",
+    "backgrounds/light.png": "e4ddcf0b3d54c355707d6825f4401372468bd0b2625713f957a5d8e5d0745421",
+    "backgrounds/light_model.png": "6a0c8749eaef48d82f7b9eab815a26067a39e2932ba2bb0e97b294df372ccabd",
+    "reference_board.png": "dd82e592f24f5e0bf75b0632a7bd26053564a6e98241cdb3d49e44b527d4d3df",
+    "samples/a1.png": "7ce25a8675eb9f2d07dbc2112678f003d6f251229d5f540c1ec9faa12d56b9aa",
+    "samples/a2.png": "b2484db79b3d69f33d8e13b731b3210568739f44cb4e97fd917e2c9a32b12390",
+    "samples/a7.png": "e304be0f409cd15c3a0eb56c5682702225cbb596168d9d877cef61c3100069ae",
+    "samples/a8.png": "ec0a8c49a7515a84651078118d7627a6a9fea74f76a1062696f53c22d71bcd1b",
+    "samples/b1.png": "07367b51544f665718679bb9ec1fe39831c2e96129adb4e254edd3f46cbe6402",
+    "samples/b2.png": "78a3df0cee324f3daaa4c16c56c1628e4c18b8faa7fc64ab392a6e1634ef6e73",
+    "samples/b7.png": "59610695e376a6311eb01712ced23521d43323b4ab81f14cd85107d5de833621",
+    "samples/b8.png": "4b8dc06eb8a952575ce07c75f67fc472ff8d0882c78233d15460af8da382beaf",
+    "samples/c1.png": "7570f22505d64d7907bc960ac705177f1a775165d054dbce2bf2ccbc034b8141",
+    "samples/c2.png": "909f48313ff116b47d4aebbcda0771b6bd6926d038e89ad84baedbb58cc983f8",
+    "samples/c7.png": "c7f6d0b479e38250e463ceb5ad9c283673b2ff54f57b64a9844e22ca16120c3a",
+    "samples/c8.png": "05ec49cd3d656b4b32bc09b873e9d83c794106866bed6fe007980522e928a1f9",
+    "samples/d1.png": "beffa72a88a15999c8c91a288ad160ff54df4f09dce94770f731f115253f0275",
+    "samples/d2.png": "8d64b784703434005020e529595a357e9dc4effcde7e5948a0f41820c86a3f16",
+    "samples/d7.png": "a70ba638f62ddccea075a6e0b1ceb8a2a26f782f0981b9b2fe97f53bfabfc943",
+    "samples/d8.png": "ef374ca14ed5484274214fd75be5ae82e0adbcb8361eaa4fc0a2cd2433394d3a",
+    "samples/e1.png": "346d9d143d789e9b5537c010f4ad55a68632aed87e714001b7165e957dc45975",
+    "samples/e2.png": "f0efed570dff4ced5533277d57d07ae66162168c8296f67bdfd82fafd054b127",
+    "samples/e7.png": "169e9a343ae773e55e6402f985e5023d559318de0425c484a03ab96a79851bb1",
+    "samples/e8.png": "a23ea69eac321d7bdc76fd69eb3bf057a6487f72ce12d621a00bdea48c7598ba",
+    "samples/f1.png": "e832a5b3d5e45fa935c777dafc6a7a89c1a004c739a0139663de43f29ee0fda1",
+    "samples/f2.png": "8314dde49ff7401a2ebc9154a23402e49332f4c76bcdc1db3f3ccdb3b110a4da",
+    "samples/f7.png": "adf0720603d31061ae60b6f4874b36660116245f7b303ef287c23b76564b268c",
+    "samples/f8.png": "b84320171b8bee3b39230c708b56552525dc3ec6953eff1d637092fbf4d65a28",
+    "samples/g1.png": "173f12b57ac8a8f21ecff76a1eb18fde6068690a578b4e20617021b2f1335803",
+    "samples/g2.png": "4ef78b4e4b60480ad439ad7fe89a02d759b4aea73ef30dc8698a4661b9fc71da",
+    "samples/g7.png": "f77ed500f7ea4c695b843809864a33fb277dc6d43f27634456a054fdfd6dcb85",
+    "samples/g8.png": "06143231ad3a489bca8ea33b41645292439082dd3bca5470c065444c38c889ee",
+    "samples/h1.png": "ec1362daf337a610a6a99067e07ba9176a42337761a121c735eecebafe9a40f8",
+    "samples/h2.png": "f0605b7686e59545c2c5ef35f628e046e35c31018e3ae176f3670ce37e6f461b",
+    "samples/h7.png": "6bc6f34f5c637c002a0c18fab9cdb5db0733b26cb7256d1f89f396117b407e2c",
+    "samples/h8.png": "12940f8d7b10b1ac25d30e19a03dc4b93fd7e7683a3dfcdb8851aff5131d3a71",
+    "template_review.png": "ba9f3027d679738afc174c1a216f8960c181a9b2b89945d262f8efbd6d7f6f1a",
+    "templates/bB.png": "5d5b940d22a7b0e561174f6de93ac3a1fc3a9c063e377334e7e9e1bbf0d54612",
+    "templates/bB_core.png": "49545add3ad8ee058c668def0399c943a2ab5fb027e076442025fda80c52826b",
+    "templates/bB_raw.png": "b84320171b8bee3b39230c708b56552525dc3ec6953eff1d637092fbf4d65a28",
+    "templates/bB_support.png": "bf6f124dcc58ad3da3bce56b1680b33cba2694f23577ded5d2111a1866e7e3f0",
+    "templates/bK.png": "e0a8a7a56246023c91c2482393d1a1b4cd81c3eef57df3ad5ea452e8ebd798e3",
+    "templates/bK_core.png": "f8ff1c640dec8c4411740eabb8e36e7178fb3e2175db4f5db36467ec47ea3dbc",
+    "templates/bK_raw.png": "a23ea69eac321d7bdc76fd69eb3bf057a6487f72ce12d621a00bdea48c7598ba",
+    "templates/bK_support.png": "e7cc9a7cfc794ae6135d4e03a8072eedb3b8880dbe0c826da75ac49c7ea37665",
+    "templates/bN.png": "15f2ab714501a3fa88bd8ff107b3507d79e342293e1285f8e0ed5598828e89ec",
+    "templates/bN_core.png": "d7e96ce2ebd94298e29000605f0dbaf8be0427cc433ab76357a82b8446c7539b",
+    "templates/bN_raw.png": "06143231ad3a489bca8ea33b41645292439082dd3bca5470c065444c38c889ee",
+    "templates/bN_support.png": "9b8c37ae6cefcd482c686cbcc422d3f425c528cf26f3e2baf860f123f71441a3",
+    "templates/bP.png": "68ce829358b24d216a3d44addd15fd68b4f95a89193a6919f2c855af256c3516",
+    "templates/bP_core.png": "d950266c9e9df360a0f900bcc994bf2d93601eedd44e750b3d97c69b5e3fe8c6",
+    "templates/bP_raw.png": "adf0720603d31061ae60b6f4874b36660116245f7b303ef287c23b76564b268c",
+    "templates/bP_support.png": "8eb69565847c575288158fad8367a9db30578408c6b8d7d8d9165b260880431d",
+    "templates/bQ.png": "979cf3bcf52a6a5e300579d4e2a0da2c58e1f8f47a7f639bfc45e8da7ff99b72",
+    "templates/bQ_core.png": "dd086aff0d9142975f5894c7cb356ec8b7e216292be7307893aceb5d334dc594",
+    "templates/bQ_raw.png": "ef374ca14ed5484274214fd75be5ae82e0adbcb8361eaa4fc0a2cd2433394d3a",
+    "templates/bQ_support.png": "6b06b18961a3d59b3fc0ac230f26df9a5128d6f665a20f334847ceed27e86cdc",
+    "templates/bR.png": "5c163f9a74fff3db6a0fbbe05551915e37acef0e2d3ff35b931c97a9dfcc8aaf",
+    "templates/bR_core.png": "4f60c1cbadce99e559b13b604d7ec8a323b9aa75406fbcb2806f1fb65effb999",
+    "templates/bR_raw.png": "ec0a8c49a7515a84651078118d7627a6a9fea74f76a1062696f53c22d71bcd1b",
+    "templates/bR_support.png": "4e9d17dae40ad89a29383a94aa153bca173302cab42c09c6a48b0771a212a9df",
+    "templates/wB.png": "d71bf573d5e3ea1bd0a83b57693fe1ad641ecf1e13d544fe1a01e847358b5349",
+    "templates/wB_core.png": "ccbba73f518c020992631ee1ec0be40695bdd2410a58d7640309d02877e1143d",
+    "templates/wB_raw.png": "e832a5b3d5e45fa935c777dafc6a7a89c1a004c739a0139663de43f29ee0fda1",
+    "templates/wB_support.png": "a7f19ac5a5b361686d547f2086672f327171cc3a5a7adf88e3b913da5a684cea",
+    "templates/wK.png": "daec5f247275f838e45eb778c6592498efc31505e636ba186a25f4a482fdf808",
+    "templates/wK_core.png": "54bf0453ee3a4582bf1a8a1ff2710f1e4dabec05d504f9a5c21d7d8776da066d",
+    "templates/wK_raw.png": "346d9d143d789e9b5537c010f4ad55a68632aed87e714001b7165e957dc45975",
+    "templates/wK_support.png": "d6e363cbc5f74b4607c1878381d142ecad5acdd4ca7098d81ae3c22c00d395af",
+    "templates/wN.png": "e7e155b314d0c007af32f2b909d0177c1ecdd5b1b52928af22381c672e76178d",
+    "templates/wN_core.png": "260c1de1bd755170feb19c0aaa554deec8671cc5b731dd31722df55fa1823a21",
+    "templates/wN_raw.png": "07367b51544f665718679bb9ec1fe39831c2e96129adb4e254edd3f46cbe6402",
+    "templates/wN_support.png": "1d1b26c8be0900e04a0321804e00866159ed459fe9be3e62ca7a4bf15448272d",
+    "templates/wP.png": "d005b4307b4171f7b9efded663327b70cadbe9cb943e31c035c4b51aad9616ba",
+    "templates/wP_core.png": "9e8086d2df8a491c8688a43ba87d20f02c761d3eb498c6340da556bc7dd7cfa1",
+    "templates/wP_raw.png": "b2484db79b3d69f33d8e13b731b3210568739f44cb4e97fd917e2c9a32b12390",
+    "templates/wP_support.png": "d317f29fac4f27628a3bc03fc6a95ca3d79ec4e38ba87deee45a7b10dfdc99ad",
+    "templates/wQ.png": "2a6151fa80d48a159f41d4156d25768f82375b729ce749d23c4d79bf85e06918",
+    "templates/wQ_core.png": "ecb2229e15cd6bdbf8146804104357dc70128537025759e63a4472085f900958",
+    "templates/wQ_raw.png": "beffa72a88a15999c8c91a288ad160ff54df4f09dce94770f731f115253f0275",
+    "templates/wQ_support.png": "a6cb8fc4324b15868ad004dd09bea2f56c075a0409888ccab9b7fdafb50a4a20",
+    "templates/wR.png": "eab6112dbfdc387d0aafc775726618d3dc75de4d84aaf5f9cdab477c37741c33",
+    "templates/wR_core.png": "4622160cf12c39d8820bee7f4d10c69d81c97318f0eb0f09e4233eb53450885c",
+    "templates/wR_raw.png": "7ce25a8675eb9f2d07dbc2112678f003d6f251229d5f540c1ec9faa12d56b9aa",
+    "templates/wR_support.png": "11ac8ba46d80cf98bb85df51ceac675fea765e04f65663fef707325b1c7f042d"
+  },
+  "edge_note": "RGBA edges are estimates; matching uses opaque core and excludes uncertain boundaries.",
+  "reviewed_at": "2026-11-24T16:27:53.293518+00:00"
+}

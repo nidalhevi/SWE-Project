@@ -1,0 +1,4 @@
+[Event "Intentional invalid-move demonstration"]
+[Result "*"]
+
+1. e4 e5 (1... Bh6 {This bishop cannot reach h6 here.}) 2. Nf3 *

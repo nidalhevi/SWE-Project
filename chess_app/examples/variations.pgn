@@ -1,0 +1,12 @@
+[Event "Team opening study"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Nidal"]
+[Black "Team"]
+[Result "*"]
+
+{A game with alternative continuations.}
+1. e4 {King pawn opening.} e5 $1
+( {Try the Sicilian instead.} 1... c5 2. Nf3 d6 (2... Nc6))
+2. Nf3 Nc6 3. Bb5 a6 *

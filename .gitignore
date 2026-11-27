@@ -11,3 +11,14 @@ venv/
 __pycache__/
 *.py[cod]
 build/
+# Generated Python files and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local recognition outputs and preferences
+2d_recognition/stage*-backup-*/
+2d_recognition/extraction-demo/
+2d_recognition/settings/image_import.json
+2d_recognition/reports/local/

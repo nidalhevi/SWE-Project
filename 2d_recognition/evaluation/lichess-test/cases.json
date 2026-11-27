@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "dataset": {
+    "name": "Lichess clean holdout",
+    "origin": "real_screenshots",
+    "split": "test",
+    "profile": "../../profiles/my_lichess/profile.json",
+    "note": "Provenance/split are declared by the author. Keep test screenshots separate from calibration/tuning."
+  },
+  "cases": [
+    {
+      "id": "ex-01",
+      "image": "images/ex-01.png",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "white_bottom": true,
+      "rect": [
+        0,
+        0,
+        1054,
+        1054
+      ],
+      "tags": {
+        "phase": "middlegame"
+      },
+      "recorded_file_sha256": "736203c1c213cadfd600b80ca90c60643b97396aeb6bc33dc328a057e50751af"
+    }
+  ]
+}

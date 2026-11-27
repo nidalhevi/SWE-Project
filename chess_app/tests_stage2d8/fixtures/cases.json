@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "dataset": {
+    "name": "Generated hard-input regressions",
+    "origin": "generated",
+    "split": "test"
+  },
+  "cases": [
+    {
+      "id": "middle-clean",
+      "image": "middle-clean.png",
+      "fen": "r2q1rk1/ppp2ppp/2nbpn2/3p4/3P1B2/2N1PN2/PPP2PPP/R2QKB1R",
+      "white_bottom": true,
+      "rect": [
+        0,
+        0,
+        512,
+        512
+      ],
+      "expected_exact": true,
+      "recorded_file_sha256": "9934c07b7275e39acd79f8eb14683b258d027973936693937112e35b9c4b82a3"
+    },
+    {
+      "id": "end-clean-flipped",
+      "image": "end-clean-flipped.png",
+      "fen": "6k1/1p3p2/7p/p3r3/P2R4/7P/2N2PP1/2R4K",
+      "white_bottom": false,
+      "rect": [
+        0,
+        0,
+        384,
+        384
+      ],
+      "expected_exact": true,
+      "recorded_file_sha256": "767e7b2d744c329b1d33434ad37d83e63927b8f170000a3d1a0779561b442748"
+    },
+    {
+      "id": "promotions-clean",
+      "image": "promotions-clean.png",
+      "fen": "Q6k/2q5/3N4/4n3/8/8/8/K7",
+      "white_bottom": true,
+      "rect": [
+        0,
+        0,
+        640,
+        640
+      ],
+      "expected_exact": true,
+      "recorded_file_sha256": "00fa31dec011aa86401ed0d1b2e06a2c94c1dc19daa986a9352a11a6d416abe0"
+    },
+    {
+      "id": "middle-panels",
+      "image": "middle-panels.png",
+      "fen": "r2q1rk1/ppp2ppp/2nbpn2/3p4/3P1B2/2N1PN2/PPP2PPP/R2QKB1R",
+      "white_bottom": true,
+      "rect": [
+        117,
+        83,
+        568,
+        568
+      ],
+      "recorded_file_sha256": "1d54dd5704d2d05245dbf8592923b299e79c306e525d4552170bdb84643cdf09"
+    },
+    {
+      "id": "end-flipped-jpeg",
+      "image": "end-flipped-jpeg.jpg",
+      "fen": "6k1/1p3p2/7p/p3r3/P2R4/7P/2N2PP1/2R4K",
+      "white_bottom": false,
+      "rect": [
+        117,
+        83,
+        440,
+        440
+      ],
+      "recorded_file_sha256": "3c02dd33a4d18dc16b04da6d810e9691dcbef9e56a11b0c9c44924b06290caa2"
+    },
+    {
+      "id": "middle-small",
+      "image": "middle-small.png",
+      "fen": "r2q1rk1/ppp2ppp/2nbpn2/3p4/3P1B2/2N1PN2/PPP2PPP/R2QKB1R",
+      "white_bottom": true,
+      "rect": [
+        117,
+        83,
+        320,
+        320
+      ],
+      "recorded_file_sha256": "049c3e42f5590a9cb119e9fc736f51cd12a5ff4ee82fffc99aa9367e8bbc89ab"
+    },
+    {
+      "id": "middle-large",
+      "image": "middle-large.png",
+      "fen": "r2q1rk1/ppp2ppp/2nbpn2/3p4/3P1B2/2N1PN2/PPP2PPP/R2QKB1R",
+      "white_bottom": false,
+      "rect": [
+        117,
+        83,
+        832,
+        832
+      ],
+      "recorded_file_sha256": "9d567c6d53308d9e8ef6c78d7a401e3a380e916fc99363df5c28d10c2bbd6361"
+    }
+  ]
+}

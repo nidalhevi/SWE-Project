@@ -1,218 +1,131 @@
-"""Chessboard rendering and mouse input.
-
-This widget displays a position. It does not implement chess rules.
-"""
-
+"""Draw a chess position and report clicks; rules live in the C referee."""
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
-from models import PositionSnapshot #added at step 2
+from models import Move, PositionSnapshot
 
-
-FILES = "abcdefgh"
-
-# Uppercase letters represent White; lowercase letters represent Black.
-PIECE_SYMBOLS = {
-    "K": "♔",
-    "Q": "♕",
-    "R": "♖",
-    "B": "♗",
-    "N": "♘",
-    "P": "♙",
-    "k": "♚",
-    "q": "♛",
-    "r": "♜",
-    "b": "♝",
-    "n": "♞",
-    "p": "♟",
-}
+FILES = 'abcdefgh'
+PIECE_SYMBOLS = dict(zip('KQRBNPkqrbnp', '♔♕♖♗♘♙♚♛♜♝♞♟'))
 
 
 class BoardWidget(QWidget):
-    # Other components can connect a function to this signal.
     square_clicked = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        self._pieces: dict[str, str] = {}
-        self._selected_square: str | None = None
+        self._pieces = {}
+        self._selected_square = None
+        self._legal_targets = set()
+        self._last_move = None
         self._flipped = False
-
-        # Leave enough space for eight squares and coordinate labels.
+        self._interactive = False
         self.setMinimumSize(360, 360)
 
-    
-    # def set_position(self, pieces: dict[str, str]) -> None:     # from step 1
-        #     """Replace the displayed piece placement.
-    
-        #     Example input:
-        #         {"e1": "K", "e8": "k", "e2": "P"}
-    
-        #     This is display data, not a complete chess position.
-        #     """
-        #     self._pieces = dict(pieces)
-        #     self._selected_square = None
-        #     self.update()
-    
-    def set_position(self, position: PositionSnapshot) -> None:     # modified, added at step 2
-        """Display the pieces derived from an accepted position snapshot."""
+    def set_position(self, position: PositionSnapshot):
         self._pieces = position.pieces
         self._selected_square = None
-        self.update()
-        
-    
-    
-    def set_selected_square(self, square: str | None) -> None:
-        """Highlight a square, or clear the highlight with None."""
-        self._selected_square = square
+        self._legal_targets.clear()
         self.update()
 
-    def flip(self) -> None:
-        """Rotate the displayed board by 180 degrees."""
+    def set_selection(self, square, targets):
+        self._selected_square = square
+        self._legal_targets = set(targets)
+        self.update()
+
+    def set_last_move(self, move: Move | None):
+        self._last_move = move
+        self.update()
+
+    def set_interactive(self, enabled):
+        # Don't disable the QWidget: keep full contrast while waiting.
+        self._interactive = enabled
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor
+        )
+
+    def flip(self):
         self._flipped = not self._flipped
         self.update()
 
-    def _board_geometry(self) -> tuple[float, float, float]:
-        """Return the board's left edge, top edge, and square size."""
-        margin = 28
+    def _board_geometry(self):
+        side = max(8.0, min(self.width(), self.height()) - 56)
+        return (self.width() - side) / 2, (self.height() - side) / 2, side / 8
 
-        # Using the smaller dimension keeps the board square.
-        side = max(8.0, min(self.width(), self.height()) - 2 * margin)
+    def _square_name(self, row, column):
+        file_index = 7 - column if self._flipped else column
+        rank = row + 1 if self._flipped else 8 - row
+        return f'{FILES[file_index]}{rank}'
 
-        left = (self.width() - side) / 2
-        top = (self.height() - side) / 2
-
-        return left, top, side / 8
-
-    def _square_name(self, row: int, column: int) -> str:
-        """Convert a displayed row/column to a chess square.
-
-        Screen rows increase downward.
-
-        Normal orientation:
-            top-left = a8, bottom-right = h1
-
-        Flipped orientation:
-            top-left = h1, bottom-right = a8
-        """
-        if self._flipped:
-            file_index = 7 - column
-            rank = row + 1
-        else:
-            file_index = column
-            rank = 8 - row
-
-        return f"{FILES[file_index]}{rank}"
-
-    def square_at(self, point: QPointF) -> str | None:
-        """Convert a widget pixel position into a square name."""
+    def square_at(self, point: QPointF):
         left, top, size = self._board_geometry()
-
-        x = point.x() - left
-        y = point.y() - top
-
-        # Ignore clicks in the margin or outside the board.
+        x, y = point.x() - left, point.y() - top
         if not (0 <= x < size * 8 and 0 <= y < size * 8):
             return None
+        return self._square_name(int(y / size), int(x / size))
 
-        column = int(x / size)
-        row = int(y / size)
+    def mousePressEvent(self, event):
+        if self._interactive and event.button() == Qt.MouseButton.LeftButton:
+            square = self.square_at(event.position())
+            if square is not None:
+                self.square_clicked.emit(square)
 
-        # Rendering and clicking share this conversion.
-        return self._square_name(row, column)
-
-    def mousePressEvent(self, event) -> None:
-        """Report left-clicked squares to the rest of the application."""
-        if event.button() != Qt.MouseButton.LeftButton:
-            return
-
-        square = self.square_at(event.position())
-
-        if square is not None:
-            self.square_clicked.emit(square)
-
-    def paintEvent(self, event) -> None:
-        """Qt calls this whenever the widget needs to be redrawn."""
+    def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+            painter.fillRect(self.rect(), QColor('#252525'))
+            left, top, size = self._board_geometry()
+            font = QFont()
+            font.setPixelSize(int(size * 0.75))
+            painter.setFont(font)
+            last_squares = (
+                {self._last_move.from_square, self._last_move.to_square}
+                if self._last_move is not None else set()
+            )
+            for row in range(8):
+                for column in range(8):
+                    square = self._square_name(row, column)
+                    rect = QRectF(left + column * size, top + row * size, size, size)
+                    color = '#EEEED2' if (row + column) % 2 == 0 else '#769656'
+                    if square in last_squares:
+                        color = '#CDD26A'
+                    if square == self._selected_square:
+                        color = '#F6D365'
+                    painter.fillRect(rect, QColor(color))
+                    if square in self._pieces:
+                        painter.setPen(QColor('#171717'))
+                        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                                         PIECE_SYMBOLS[self._pieces[square]])
+                    if square in self._legal_targets:
+                        self._draw_target(painter, rect, size, square in self._pieces)
+            self._draw_coordinates(painter, left, top, size)
+        finally:
+            painter.end()
 
-        painter.fillRect(self.rect(), QColor("#252525"))
+    def _draw_target(self, painter, rect, size, occupied):
+        painter.save()
+        if occupied:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor('#285535'), max(2.0, size * 0.06)))
+            inset = size * 0.07
+            painter.drawEllipse(rect.adjusted(inset, inset, -inset, -inset))
+        else:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(25, 55, 30, 140))
+            painter.drawEllipse(rect.center(), size * 0.12, size * 0.12)
+        painter.restore()
 
-        left, top, size = self._board_geometry()
-
-        light = QColor("#EEEED2")
-        dark = QColor("#769656")
-        selected = QColor("#F6D365")
-
-        piece_font = QFont()
-        piece_font.setPixelSize(int(size * 0.75))
-
-        label_font = QFont()
-        label_font.setPixelSize(14)
-
-        for row in range(8):
-            for column in range(8):
-                square = self._square_name(row, column)
-
-                rect = QRectF(
-                    left + column * size,
-                    top + row * size,
-                    size,
-                    size,
-                )
-
-                # a8 is light in the normal orientation.
-                color = light if (row + column) % 2 == 0 else dark
-
-                if square == self._selected_square:
-                    color = selected
-
-                painter.fillRect(rect, color)
-
-                piece = self._pieces.get(square)
-
-                if piece is not None:
-                    painter.setFont(piece_font)
-                    painter.setPen(QColor("#171717"))
-                    painter.drawText(
-                        rect,
-                        Qt.AlignmentFlag.AlignCenter,
-                        PIECE_SYMBOLS[piece],
-                    )
-
-        # File letters below the board.
-        painter.setFont(label_font)
-        painter.setPen(QColor("#EEEEEE"))
-
+    def _draw_coordinates(self, painter, left, top, size):
+        font = QFont()
+        font.setPixelSize(14)
+        painter.setFont(font)
+        painter.setPen(QColor('#EEEEEE'))
         for column in range(8):
-            file_letter = self._square_name(7, column)[0]
-            label_rect = QRectF(
-                left + column * size,
-                top + 8 * size,
-                size,
-                24,
-            )
-            painter.drawText(
-                label_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                file_letter,
-            )
-
-        # Rank numbers to the left of the board.
+            rect = QRectF(left + column * size, top + 8 * size, size, 24)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                             self._square_name(7, column)[0])
         for row in range(8):
-            rank_number = self._square_name(row, 0)[1]
-            label_rect = QRectF(
-                left - 24,
-                top + row * size,
-                24,
-                size,
-            )
-            painter.drawText(
-                label_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                rank_number,
-            )
-
-        painter.end()
+            rect = QRectF(left - 24, top + row * size, 24, size)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                             self._square_name(row, 0)[1])
